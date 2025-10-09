@@ -1579,3 +1579,75 @@ class Hamiltonian:
 
         self.fci_energy = fci_energy
         return fci_energy
+
+    def solve_CCSD(self) -> float:
+        """Perform a CCSD calculation using the PySCF solver pyscf.cc.RCCSD().
+
+        Returns:
+            float:  Computed CCSD energy.
+        """
+        # based on https://github.com/pyscf/pyscf/blob/master/examples/cc/40-ccsd_custom_hamiltonian.py
+        # Returns the correlation energy. To obtain the total energy HF energy needs to be added.
+
+        # Construction of a molecule container. Only used as a means to
+        # hand over the hamiltonian
+        mol = gto.M(verbose=0)
+        n = self.nelec * 2
+        mol.nelectron = n
+        mol.incore_anyway = True
+
+        h1 = self.h_pq.real
+
+        mf = scf.RHF(mol)
+        mf.get_hcore = lambda *args: h1
+        mf.get_ovlp = lambda *args: np.eye(h1.shape[0])
+
+        eri = self.h_pqrs.real
+        # Transform ERIs to chemist's index order
+        eri = eri.swapaxes(1, 2).swapaxes(1, 3)
+        mf._eri = eri
+
+        mf.kernel()
+
+        # pyscf constructs molecular orbitals from atomic orbitals and stores the coefficients
+        # for that in mo_coeff. As we already hand over matrices that are calculated with molecular orbitals and
+        # we do not want to hand over thousands of AOs, setting mo_coeff = eye() leads to AO=MO
+        mf.mo_coeff = np.eye(mf.mo_coeff.shape[0])
+
+        mycc = cc.RCCSD(mf)
+        mycc.out = mycc.kernel()
+
+        return mycc.e_corr + self.hf_energy()
+
+    def solve_CCSD_t(self) -> np.ndarray:
+        """Perform a CCSD(T) calculation using the PySCF solver pyscf.cc.CCSD() in combination with the .ccsd_t() PySCF function.
+
+        Returns:
+            float:  Computed CCSD(T) energy.
+        """
+        mol = gto.M(verbose=0)
+        n = self.nelec * 2
+        mol.nelectron = n
+        mol.incore_anyway = True
+
+        h1 = self.h_pq.real
+
+        mf = scf.RHF(mol)
+        mf.get_hcore = lambda *args: h1
+        mf.get_ovlp = lambda *args: np.eye(h1.shape[0])
+
+        eri = self.h_pqrs.real
+        eri = eri.swapaxes(1, 2).swapaxes(1, 3)
+        mf._eri = eri
+
+        mf.kernel()
+
+        mf.mo_coeff = np.eye(mf.mo_coeff.shape[0])
+
+        # 1. Normal CCSD calculation
+        mycc = cc.CCSD(mf).run()
+        mycc.kernel()
+        # 2. Correction of the correlation energy due to triples
+        et = mycc.ccsd_t()
+
+        return mycc.e_corr + et + self.hf_energy()
