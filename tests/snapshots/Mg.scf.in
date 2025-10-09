@@ -1,0 +1,44 @@
+ &CONTROL
+   calculation = 'scf',
+   outdir = '../qe_files/Mg',
+   prefix = 'Mg_simple',
+   pseudo_dir = '/home/schu_e3/Pseudopotentials/',
+   forc_conv_thr   =  0.001
+   prefix          =  'Mg'
+   verbosity       =  'high'
+ /
+
+ &SYSTEM
+   A               =  3.19129
+   C               =  5.18933
+   degauss         =  0.003
+   ecutrho         =  400
+   ecutwfc         =  100
+   ibrav           =  4
+   nat             =  2
+   nbnd 	   =  15
+   ntyp            =  1
+   occupations     =  'smearing'
+   smearing        =  'm-p'
+ /
+
+ &ELECTRONS
+   conv_thr        =  1e-08
+ /
+
+ &IONS
+ /
+
+ &CELL
+ /
+
+ATOMIC_SPECIES 
+  Mg    24.31   Mg_ONCV_PBE-1.2.upf
+
+
+ATOMIC_POSITIONS crystal
+  Mg       0.000000000000   0.000000000000   0.000000000000
+  Mg       0.666666666667   0.333333333333   0.500000000000
+
+K_POINTS gamma
+

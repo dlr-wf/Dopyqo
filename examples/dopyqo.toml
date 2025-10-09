@@ -1,0 +1,28 @@
+# Run with: dopyqo -i dopyqo.toml
+
+[control]
+base_folder = "qe_files/Be"
+prefix = "Be"
+active_electrons=2
+active_orbitals=2
+run_vqe = true
+run_fci = true
+use_qiskit = false
+logging = false
+
+[geometry]
+unit = "angstrom"
+coordinates = [
+    [0.0, 0.0, 0.0],
+    [0.5, 0.5, 0.5]
+]
+lattice_vectors = [
+    [1.0, 0.0, 0.0],
+    [0.0, 1.0, 0.0],
+    [0.0, 0.0, 1.0],
+]
+
+[vqe]
+# parameters = [0.4, 0.3, 0.1]
+optimizer = "ExcitationSolve"
+uccsd_reps = 1
