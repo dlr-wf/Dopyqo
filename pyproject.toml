@@ -1,0 +1,60 @@
+[build-system]
+requires = ["setuptools", "setuptools-scm"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dopyqo"
+authors = [
+    {name = "Erik Schultheis", email = "Erik.Schultheis@dlr.de"},
+    {name = "Gabriel Breuil", email = "Gabriel.Breuil@dlr.de"},
+    {name = "Alexander Rehn"},
+    {name = "Erik Hansen"},
+]
+description = "Dopyqo: a many-body post-processing tool for Quantum ESPRESSO"
+readme = "README.md"
+requires-python = ">=3.10"
+keywords = ["dopyqo", "Quantum ESPRESSO", "many-body", "Bader charges", "FCI", "quantum computing", "VQE"]
+license = {file = "LICENSE.txt"}
+classifiers = [
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+]
+dependencies = [
+    "numpy==1.26.4",
+    "h5py==3.13.0",
+    "xmltodict==0.13.0",
+    "qiskit==1.4.0",
+    "qiskit-nature==0.7.2",
+    "pyscf==2.8.0",
+    "matplotlib==3.10.1",
+    "termplotlib==0.3.9",
+    "scipy==1.15.2",
+    "numba==0.60.0",
+    "tencirchem-ng==2024.10",
+    "excitationsolve",
+    "pyvista[jupyter]==0.45.3",
+]
+
+dynamic = ["version"]
+
+[tool.setuptools.dynamic]
+version = {attr = "dopyqo.info.__version__"}
+
+[tool.setuptools]
+packages = ["dopyqo", "dopyqo.scripts"]
+
+[project.optional-dependencies]
+rs = ["dopyqo-rs"]
+gpu = ["cupy"]
+all = ["dopyqo-rs", "cupy"]
+
+[project.urls]
+Repository = "https://gitlab.dlr.de/quanticom/qiskit-quantum-espresso-driver"
+Issues = "https://gitlab.dlr.de/quanticom/qiskit-quantum-espresso-driver/-/issues"
+
+[project.scripts]
+dopyqo = "dopyqo.scripts.main:main" # Executes `from dopyqo.scripts.main import main; sys.exit(main())`
