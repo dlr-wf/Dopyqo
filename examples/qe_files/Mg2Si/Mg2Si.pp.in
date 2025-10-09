@@ -1,0 +1,13 @@
+&INPUTPP
+    filplot         =  'Mg2Si.pp'
+    plot_num        =  0
+    prefix          =  'Mg2Si'
+/
+
+
+&PLOT
+    fileout         =  'Mg2Si_pp.cube'
+    iflag           =  3
+    output_format   =  6
+/
+

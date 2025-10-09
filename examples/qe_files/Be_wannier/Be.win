@@ -1,0 +1,35 @@
+num_wann        = 4
+exclude_bands : 1-2, 7-8
+
+num_iter        = 200
+
+write_u_matrices = .true.
+write_hr=.true.
+write_xyz = .true.
+translate_home_cell = .false.
+wannier_plot=.true.
+wannier_plot_supercell = 1
+
+begin atoms_cart
+Bohr
+        Be    -2.139909470152091E+000 -1.235477308912179E+000 -1.688518697687808E+000       
+        Be    -2.139909470152091E+000  1.235477308912178E+000 -5.065556093063424E+000        
+end atoms_cart 
+
+begin projections
+random
+end projections
+
+begin unit_cell_cart
+Bohr
+        -2.139909470152091E+000 -3.706431925995249E+000 -0.000000000000000E+000
+        -2.139909470152091E+000  3.706431925995249E+000  0.000000000000000E+000
+         0.000000000000000E+000  0.000000000000000E+000 -6.754074790751232E+000
+end unit_cell_cart
+
+mp_grid    : 1 1 1
+gamma_only : true
+
+begin kpoints
+0.0 0.0 0.0
+end kpoints

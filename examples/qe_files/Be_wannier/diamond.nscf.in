@@ -1,0 +1,45 @@
+ &CONTROL
+    outdir = './'
+    prefix = 'diamond'
+    pseudo_dir = '/home/schu_e3/Pseudopotentials/'
+    calculation ='nscf'
+    verbosity       =  'high'
+ /
+
+ &SYSTEM    
+   celldm(1)       =  6.741972671
+   ecutrho         =  320
+   ecutwfc         =  80
+   ibrav           =  2
+   nat             =  2
+   noinv           =  .FALSE.
+   nosym           =  .FALSE.
+   ntyp            =  1
+   occupations     =  'smearing'
+   degauss         =  0.003
+   smearing        =  'm-p'
+/
+
+ &ELECTRONS
+   conv_thr        =  1e-08
+ /
+
+ &IONS
+ /
+
+ &CELL
+ /
+
+ATOMIC_SPECIES
+   C  12.011 C_ONCV_PBE-1.2.upf
+   
+ATOMIC_POSITIONS alat
+C            -0.0032836331       -0.0032836356       -0.0032836349
+C             0.2531158973        0.2531158954        0.2531158956
+
+K_POINTS gamma
+
+
+
+
+
