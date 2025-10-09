@@ -886,6 +886,81 @@ class Wfc:
         r_in = wigner_seitz_in_radius(facets)
         return r_in
 
+    def to_qe_input(self, filename: str, prefix: str, outdir: str = "./", pseudo_dir: str | None = None):
+        """
+        Generates a Quantum ESPRESSO (QE) input file for a self-consistent field (SCF) calculation.
+        Author: Erik Hansen
+
+        Args:
+            filename (str): Full path and filename of the input file to create
+            prefix (str): Prefix for the QE calculation
+            outdir (str): Output directory specified in the input file ('outdir')
+            pseudo_dir (str | None, optional): Directory with the pseudopotential files specified in the input file ('pseudo_dir').
+                                               Not written to input file if None. Defaults to None.
+        """
+        skip_occ = False
+        if self.occupations_scf == "from_input":
+            print(
+                f"{ORANGE}Warning: 'occupations' in original QE input file was set to 'from_input'. "
+                + f"This is currently not supported. 'occupations' will be skipped in the generated QE input file.{RESET_COLOR}"
+            )
+            skip_occ = True
+
+        folder_path = os.path.join(*os.path.split(filename)[:-1])
+        if len(folder_path) > 0:
+            os.makedirs(folder_path, exist_ok=True)
+        # Write the new .in file
+        with open(filename, "w", encoding="utf-8") as f:
+            f.write("&CONTROL\n")
+            f.write("  calculation = 'scf',\n")
+            f.write("  forc_conv_thr = 0.001,\n")  # fi problems, maby extract from xml file and use this one
+            f.write(f"  prefix = '{prefix}',\n")
+            f.write("  verbosity = 'high',\n")
+            f.write(f"  outdir = '{outdir}',\n")
+            if pseudo_dir is not None:
+                f.write(f"  pseudo_dir = '{pseudo_dir}',\n")
+            f.write("/\n\n")
+            f.write("&SYSTEM\n")
+            f.write(f"  ecutwfc = {self.ecutwfc*2},\n")  # Hartree to Ry
+            f.write(f"  ecutrho = {self.ecutrho*2},\n")  # Hartree to Ry
+            f.write(f"  ibrav = 0,\n")
+            f.write(f"  nat = {len(self.atom_positions_hartree)},\n")
+            f.write(f"  ntyp = {len(self.atomic_species)},\n")  # Extract number of species names
+            f.write(f"  nbnd = {self.nbnd},\n")  # TODO: a formula to calculate it might be needed
+            if not skip_occ:
+                f.write(f"  occupations = '{self.occupations_scf}',\n")
+                if self.occupations_scf == "smearing":
+                    f.write(f"  degauss = {self.degauss * 2.0},\n")  # Hartree to Ry
+                    f.write(f"  smearing = '{self.smearing}',\n")
+            f.write("/\n\n")
+            f.write("&ELECTRONS\n")
+            f.write(f"  conv_thr = {self.conv_thr * 2.0},\n")  # Hartree to Ry
+            f.write(f"  electron_maxstep = {self.electron_maxstep},\n")
+            f.write(f"  mixing_beta = {self.mixing_beta},\n")
+            f.write("/\n\n")
+            f.write("&IONS\n")
+            f.write("/\n\n")
+            f.write("&CELL\n")
+            f.write("/\n\n")
+            f.write("CELL_PARAMETERS bohr\n")
+            for vector in self.a:
+                f.write(f"  {vector[0]} {vector[1]} {vector[2]}\n")
+            f.write("\n")
+            f.write("ATOMIC_SPECIES\n")
+            for name, vals in self.atomic_species.items():
+                mass = vals["mass"]
+                pseudo_file = vals["pseudo_file"]
+                f.write(f"  {name} {mass} {pseudo_file}\n")
+            f.write("\n")
+            f.write("ATOMIC_POSITIONS bohr\n")
+            for atom in self.atoms:
+                name = atom["element"]
+                pos = atom["position_hartree"]
+                f.write(f"  {name} {pos[0]} {pos[1]} {pos[2]}\n")
+            f.write("\n")
+            f.write("K_POINTS gamma\n")
+        logging.info("QE SCF input file written to: %s", filename)
+
     def plot_real_space(
         self,
         isosurfaces: int | list[float],
@@ -1146,6 +1221,76 @@ class Wfc:
                 **kwargs,
             )
         return plotter
+
+
+def runQE(
+    input_file: str,
+    num_cpus: int = 1,
+    nk: int = 1,
+    nb: int = 1,
+    nt: int = 1,
+):
+    """
+    Executes a Quantum Espresso (QE) simulation by generating the necessary input files,
+    running the QE executable, and managing the working directory.
+    Author: Erik Hansen
+
+    See https://www.quantum-espresso.org/Doc/user_guide/node20.html
+    for arguments nk, nb, nt.
+
+    Side Effects:
+        - Creates a new folder for the QE run and generates input files.
+        - Executes the Quantum Espresso `pw.x` command using `mpirun`.
+        - Changes the working directory to the QE run folder and back to the original path.
+        - Writes output to a file named `<prefix_of_QE_current>_scf.out`.
+    Notes:
+        - Ensure that Quantum Espresso is installed and accessible via the `pw.x` command.
+        - The `mpirun` command assumes 10 cores are available for parallel execution.
+
+    Args:
+        input_file (str): Full path and filename of the input file.
+        num_cpus (int): Number of MPI processes
+        nk (int): number of processes for k-point parallelization
+        nb (int): number of processes for KS-band parallelization
+        nt (int): number of processes for plane wave parallelization
+    """
+    # current_path = os.path.dirname(os.path.abspath(__file__))
+    current_path = os.getcwd()
+    logging.info("Changing directory...")
+
+    folder_path = os.path.join(*os.path.split(input_file)[:-1])
+    if len(folder_path) > 0:
+        os.chdir(folder_path)
+    input_file = os.path.split(input_file)[-1]
+    if input_file.endswith(".in"):
+        output_file = f"{input_file[:-3]}.out"
+    else:
+        output_file = f"{input_file}.out"
+    print("Running Quantum Espresso...")
+    command = f"mpirun -n {num_cpus} --bind-to core pw.x -nk {nk} -nb {nb} -nt {nt} -in {input_file} > {output_file}"
+    process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    output_out, _output_err = process.communicate()
+    if output_out is not None and len(output_out) > 0:
+        print(f"{RED}Quantum ESPRESSO error output:{SOFT_MAGENTA}\n{textwrap.indent(output_out, '    ')}{RESET_COLOR}")
+    process.wait()  # Wait for the process to complete
+    # Check for crash
+    if "CRASH" in os.listdir():
+        # Print also in cases where CRASH file cannot be read
+        print(
+            f"{RED}Quantum ESPRESSO error: QE calculation crashed.{RESET_COLOR}",
+            file=sys.stderr,
+        )
+        with open("CRASH", "r", encoding="UTF-8") as file:
+            contents = file.read()
+        print(
+            f"{RED}Content of the 'CRASH' file in\n{os.getcwd()}:\n{ORANGE}{contents}{RESET_COLOR}",
+            file=sys.stderr,
+        )
+        os.chdir(current_path)
+        sys.exit(1)
+    # Exit the run folder
+    os.chdir(current_path)
+    print(f"{GREEN}Done!{RESET_COLOR}")
 
 
 # Adjusted from pymatgen.core.lattice.get_wigner_seitz_cell

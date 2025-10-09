@@ -24,4 +24,5 @@ from dopyqo.wfc import Wfc
 from dopyqo.hamiltonian import Hamiltonian
 from dopyqo.wannier90 import read_u_mat
 from dopyqo.transform_matrices import transform_one_body_matrix, transform_two_body_matrix, to_density_matrix
+from dopyqo.wfc import runQE
 from dopyqo.scripts.main import run
