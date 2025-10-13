@@ -53,8 +53,8 @@ gpu = ["cupy"]
 all = ["dopyqo-rs", "cupy"]
 
 [project.urls]
-Repository = "https://gitlab.dlr.de/quanticom/qiskit-quantum-espresso-driver"
-Issues = "https://gitlab.dlr.de/quanticom/qiskit-quantum-espresso-driver/-/issues"
+Repository = "https://github.com/dlr-wf/Dopyqo"
+Issues = "https://github.com/dlr-wf/Dopyqo/issues"
 
 [project.scripts]
 dopyqo = "dopyqo.scripts.main:main" # Executes `from dopyqo.scripts.main import main; sys.exit(main())`
