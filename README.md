@@ -110,17 +110,15 @@ If using Linux set the environment variable `OMP_NUM_THREADS` to limit the numbe
 Feel free to contact [David Melching](mailto:David.Melching@dlr.de) if you have any questions.
 
 ## Citation
-If you use portions of this code please cite our [paper](https://arxiv.org/abs/-):
+If you use portions of this code please cite our [paper](https://arxiv.org/abs/2510.12887):
 ```bibtex
-@misc{Schultheis2025ManyBody,
-      title={Many-body post-processing of density functional calculations using the variational quantum eigensolver for Bader charge analysis}, 
-      author={Erik Schultheis and Alexander Rehn and Gabriel Breuil},
-      year={2025},
-      eprint={-},
-      archivePrefix={arXiv},
-      primaryClass={quant-ph},
-      url={https://arxiv.org/abs/-}, 
-      doi={-}
+@article{Schultheis2025ManyBody,
+      title={Many-body post-processing of density functional calculations using the variational quantum eigensolver for Bader charge analysis},
+      url={https://arxiv.org/abs/2510.12887},
+      DOI={10.48550/ARXIV.2510.12887},
+      publisher={arXiv},
+      author={Schultheis, Erik and Rehn, Alexander and Breuil, Gabriel},
+      year={2025}
 }
 ```
 
