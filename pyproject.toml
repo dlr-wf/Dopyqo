@@ -9,6 +9,7 @@ authors = [
     {name = "Gabriel Breuil", email = "Gabriel.Breuil@dlr.de"},
     {name = "Alexander Rehn"},
     {name = "Erik Hansen"},
+    {name = "Jasper Nickelsen"},
 ]
 description = "Dopyqo: a many-body post-processing tool for Quantum ESPRESSO"
 readme = "README.md"
