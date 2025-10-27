@@ -1,3 +1,4 @@
+[![DOI](https://zenodo.org/badge/1072921992.svg)](https://doi.org/10.5281/zenodo.17457083)
 
 <div style="text-align: center;">
 <pre>
