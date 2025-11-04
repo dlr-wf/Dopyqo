@@ -729,6 +729,7 @@ class Hamiltonian:
             case dopyqo.VQEOptimizers.ExcitationSolve:
                 counts_tcc = excsolve_obj.nfevs
                 values_tcc = excsolve_obj.energies
+                tcc_vqe_params_lst = excsolve_obj.params
 
         self.tcc_vqe_params = params_tcc
         self.tcc_vqe_params_lst = tcc_vqe_params_lst
