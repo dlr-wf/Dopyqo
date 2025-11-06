@@ -822,58 +822,13 @@ def run(
                         print()
                         dopyqo.print_block("Running VQE", color=block_color, flush=True)
                     if config.use_qiskit:  # Qiskit
-                        import qiskit_algorithms.optimizers as optim
-
-                        match config.vqe_optimizer:
-                            case dopyqo.VQEOptimizers.L_BFGS_B:
-                                maxiter = 1e6 if config.vqe_maxiter is None else config.vqe_maxiter
-                                if config.vqe_excitations is not None:
-                                    n_exc = len(config.vqe_excitations)
-                                else:
-                                    no = config.active_electrons // 2
-                                    norb = config.active_orbitals
-                                    nv = norb - no
-
-                                    n_singles = no * nv * 2
-                                    n_doubles = 2 * (no * (no - 1) // 2) * (nv * (nv - 1) // 2)
-                                    for i in range(no):
-                                        for j in range(i + 1):
-                                            for a in range(nv):
-                                                for b in range(a + 1):
-                                                    if i == j and a == b:
-                                                        n_doubles += 1
-                                                        continue
-                                                    n_doubles += 2
-                                                    if (i != j) and (a != b):
-                                                        n_doubles += 2
-                                    n_exc = (n_singles + n_doubles) * config.uccsd_reps
-                                optimizer_fun = optim.L_BFGS_B(maxfun=maxiter * 4 * n_exc, maxiter=maxiter, ftol=1e-13)
-                            case dopyqo.VQEOptimizers.COBYLA:
-                                maxiter = 1e6 if config.vqe_maxiter is None else config.vqe_maxiter
-                                optimizer_fun = optim.COBYLA(maxiter=maxiter, tol=1e-13)  # Classical optimizer
-                            case dopyqo.VQEOptimizers.ExcitationSolve:
-                                try:
-                                    from excitationsolve.excitation_solve_qiskit import ExcitationSolveQiskit
-                                except ImportError:
-                                    print(
-                                        f"{RED}Import error: Could not import excitationsolve package. Install excitationsolve or select another optimizer!{RESET_COLOR}"
-                                    )
-                                    sys.exit(1)
-
-                                maxiter = 100 if config.vqe_maxiter is None else config.vqe_maxiter
-                                optimizer_fun = ExcitationSolveQiskit(maxiter=maxiter, tol=1e-12)
-                            case _:
-                                print(
-                                    f"{RED}Config error: Optimizer {config.vqe_optimizer} not supported. Use dopyqo.VQEOptimizers types!{RESET_COLOR}"
-                                )
-                                sys.exit(1)
                         if config.vqe_initial_parameters is not None:
                             print(
                                 f"{RED}Config error: Setting vqe_initial_parameters is not supported when using qiskit!{RESET_COLOR}", file=sys.stderr
                             )
                             sys.exit(1)
                         start_time_vqe = time.perf_counter()
-                        h_ks.solve_vqe_qiskit(UCCSD_reps=config.uccsd_reps, optimizer=optimizer_fun)
+                        h_ks.solve_vqe_qiskit(UCCSD_reps=config.uccsd_reps, optimizer=config.vqe_optimizer)
                         time_vqe = time.perf_counter() - start_time_vqe
                     else:  # TenCirChem
                         optimizer = config.vqe_optimizer

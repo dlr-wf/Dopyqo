@@ -30,6 +30,7 @@ dependencies = [
     "xmltodict==0.13.0",
     "qiskit==1.4.0",
     "qiskit-nature==0.7.2",
+    "qiskit-algorithms==0.3.1",
     "pyscf==2.8.0",
     "matplotlib==3.10.1",
     "termplotlib==0.3.9",
