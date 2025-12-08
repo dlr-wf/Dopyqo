@@ -155,17 +155,16 @@ def run(
     pps = [dopyqo.pseudopot.Pseudopot(pp_file) for pp_file in pp_files]
 
     logging.info("Reading data from files...")
+    wfc_files = [x for x in os.listdir(os.path.join(config.base_folder, f"{config.prefix}.save")) if x.startswith("wfc")]
+    wfc_files = sorted(wfc_files, key=lambda x: float(x[3:].split(".")[0]))
+    wfc_files = [os.path.join(config.base_folder, f"{config.prefix}.save", x) for x in wfc_files]
     if config.kpoint_idx == "all":
-        wfc_files = [x for x in os.listdir(os.path.join(config.base_folder, f"{config.prefix}.save")) if x.startswith("wfc")]
-        wfc_files = sorted(wfc_files, key=lambda x: float(x[3:].split(".")[0]))
-        dat_files = [os.path.join(config.base_folder, f"{config.prefix}.save", x) for x in wfc_files]
-        wfc_obj_lst = dopyqo.Wfc.from_file_all_kpoints(dat_files, xml_file, pseudopots=pps)
+        wfc_obj_lst = dopyqo.Wfc.from_file_all_kpoints(wfc_files, xml_file, pseudopots=pps)
     else:
-        wfc_files = [x for x in os.listdir(os.path.join(config.base_folder, f"{config.prefix}.save")) if x.startswith("wfc")]
         if config.kpoint_idx is None:
-            wfc_file = os.path.join(config.base_folder, f"{config.prefix}.save", wfc_files[0])
+            wfc_file = wfc_files[0]
         else:
-            wfc_file = os.path.join(config.base_folder, f"{config.prefix}.save", wfc_files[config.kpoint_idx])
+            wfc_file = wfc_files[config.kpoint_idx]
         wfc_obj_lst = [dopyqo.Wfc.from_file(wfc_file, xml_file, pseudopots=pps, kpoint_idx=config.kpoint_idx)]
     if len(wfc_obj_lst) == 1:
         str_tmp = ""
@@ -266,9 +265,9 @@ def run(
             orbital_indices_core + orbital_indices_active, binary_occupations=binary_occupations
         )
         occupations_active, c_ip_active = wfc_obj.get_orbitals_by_index(orbital_indices_active, binary_occupations=binary_occupations)
-        occupations_active_xml, _ = wfc_obj.get_orbitals_by_index(orbital_indices_active, binary_occupations=False)
         with warnings.catch_warnings():  # Ignore warning that all core orbitals are occupied
             warnings.filterwarnings("ignore", category=Warning)
+            occupations_active_xml, _ = wfc_obj.get_orbitals_by_index(orbital_indices_active, binary_occupations=False)
             occupations_core, c_ip_core = wfc_obj.get_orbitals_by_index(orbital_indices_core, binary_occupations=binary_occupations)
 
         # Calculate matrix elements
