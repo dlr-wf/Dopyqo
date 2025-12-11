@@ -9,7 +9,7 @@ from dopyqo.helpers.config import *
 from dopyqo.helpers.matrix_elements import *
 from dopyqo.helpers.atoms import elements_to_atomic_number
 from dopyqo.helpers.tcc_helpers import *
-from dopyqo.calc_matrix_elements import nuclear_repulsion_energy_ewald, iTj
+from dopyqo.calc_matrix_elements import nuclear_repulsion_energy_ewald, iTj, check_symmetry_one_body_matrix, check_symmetry_two_body_matrix
 from dopyqo.eri_pair_densities import (
     eri,
     get_frozen_core_energy_pp,

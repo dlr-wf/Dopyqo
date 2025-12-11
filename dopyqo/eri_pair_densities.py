@@ -78,13 +78,13 @@ def pair_density(
 
     Args:
         c_ip_array (np.ndarray): Array of coefficients describing the Kohn-Sham orbitals \psi_i(p) in the plane wave basis,
-                                 shape (#bands, #grid_size, #grid_size, #grid_size)
-        c_jp_array (np.ndarray | None): Same as c_ip_array but the coefficients describing \psi_j(p)
+                                 shape (#bands_i, #grid_size, #grid_size, #grid_size)
+        c_jp_array (np.ndarray | None): Same as c_ip_array but the coefficients describing \psi_j(p), shape (#bands_j, #grid_size, #grid_size, #grid_size)
                                         instead of \psi_i(p) in \rho_ij(p)=\psi*_i(p) * \psi_j(p) (* is convolution).
                                         If None, this is set to c_ip_array
 
     Returns:
-        np.ndarray: Pair density in reciprocal space
+        np.ndarray: Pair density in reciprocal space, shape (#bands_i, #bands_j, #grid_size, #grid_size, #grid_size)
     """
     using_cupy = False
 
@@ -160,6 +160,181 @@ def pair_density(
     # if using_cupy:
     #     return xp.asnumpy(rho_ij_p)
     return rho_ij_p
+
+
+def pair_density_conj_sum(
+    c_ip_array: np.ndarray,
+    c_kp_array: np.ndarray,
+    use_gpu: bool = True,
+) -> np.ndarray:
+    r"""Calculates \sum_k \rho*_ki(p) \rho_kj(p),
+    where j and k go over the same orbitals defined by argument c_jp_array
+    where \rho_ij(p) is calculated with dopyqo.eri_pair_densities.pair_density function.
+
+    Args:
+        c_ip_array (np.ndarray): Array of coefficients describing the Kohn-Sham orbitals \psi_i(p) and \psi_j(p) (\psi_i(p) = \psi_j(p))
+                                 in the plane wave basis,
+                                 shape (#bands_i, #grid_size, #grid_size, #grid_size)
+        c_kp_array (np.ndarray | None): Same as c_ip_array but the coefficients describing \psi_k(p),
+                                        shape (#bands_k, #grid_size, #grid_size, #grid_size)
+
+    Returns:
+        np.ndarray: Pair density in reciprocal space, shape (#bands_j, #bands_j, #grid_size, #grid_size, #grid_size)
+    """
+    using_cupy = False
+
+    if use_gpu:
+        try:
+            import cupy as cp
+        except ImportError:
+            print(f"{ORANGE}Import warning: Could not import cupy package. Falling back to numpy.{RESET_COLOR}")
+            xp = np
+        else:  # No exception
+            xp = cp
+            using_cupy = True
+    else:
+        xp = np
+
+    my_context = nullcontext()
+    if using_cupy:
+        my_context = cp.cuda.Device(cp.cuda.runtime.getDeviceCount() - 1)  # Use last available GPU
+    with my_context:
+        dtype = xp.complex128
+
+        assert c_ip_array.ndim == c_kp_array.ndim == 4
+        assert c_ip_array.shape[1:] == c_kp_array.shape[1:]
+
+        nbands_i = c_ip_array.shape[0]
+        nbands_k = c_kp_array.shape[0]
+        ngrid = c_ip_array.shape[1:]
+        assert ngrid == c_kp_array.shape[1:]
+
+        # rho_ij_p = xp.zeros((nbands_i, nbands_j, *ngrid), dtype)
+        rho_ij_p = np.zeros((nbands_i, nbands_i, *ngrid), dtype)
+
+        for k in range(nbands_k):
+            logging.info("Calculating pair density %s/%s ...", k + 1, nbands_k)
+            c_kp_shifted = xp.fft.ifftshift(c_kp_array[k])
+            psi_r_k_conj = xp.fft.ifftn(c_kp_shifted).conj()
+            #
+            for j in range(nbands_i):
+                c_jp_shifted = xp.fft.ifftshift(c_ip_array[j])
+                psi_r_j = xp.fft.ifftn(c_jp_shifted)
+                #
+                # psi*_i(r) . psi_j(r), where . is the standard multiplication
+                # Same as psi_i(p) * psi_j(p), where * is the convolution operation
+                rho_kj_r = psi_r_j * psi_r_k_conj
+                rho_kj_p_val = xp.fft.fftshift(xp.fft.fftn(rho_kj_r))
+                if using_cupy:
+                    rho_kj_p_val = xp.asnumpy(rho_kj_p_val)
+
+                # range_start = 0
+                range_start = j
+                for i in range(range_start, nbands_i):
+                    c_ip_shifted = xp.fft.ifftshift(c_ip_array[i])
+                    psi_r_i = xp.fft.ifftn(c_ip_shifted)
+                    #
+                    # psi*_i(r) . psi_j(r), where . is the standard multiplication
+                    # Same as psi_i(p) * psi_j(p), where * is the convolution operation
+                    rho_ki_r = psi_r_i * psi_r_k_conj
+                    rho_ki_p_val = xp.fft.fftshift(xp.fft.fftn(rho_ki_r))
+                    if using_cupy:
+                        rho_ki_p_val = xp.asnumpy(rho_ki_p_val)
+
+                    # \sum_k \rho*_ik(p) \rho_jk(p)
+                    rho_ij_p[i, j, :] += rho_ki_p_val.conj() * rho_kj_p_val
+                    if i != j:
+                        # since \sum_k \rho*_jk(p) \rho_ik(p) = ( \sum_k \rho*_ik(p) \rho_jk(p) )*
+                        rho_ij_p[j, i, :] = rho_ij_p[i, j, :].conj()
+
+    return rho_ij_p
+
+
+def pair_density_sums(
+    c_ip_array: np.ndarray,
+    use_gpu: bool = True,
+    calc_sums: tuple[bool, bool] = (True, True),
+) -> tuple[np.ndarray, np.ndarray]:
+    r"""Calculates
+
+    sum1 = \sum_i \rho_ii(p)
+    and
+    sum2 = \sum_ij \rho*_ji(p) \rho_ji(p) = \sum_ij |\rho_ji(p)|^2,
+
+    where i and j go over the same orbitals defined by argument c_ip_array
+    where \rho_ij(p) is calculated with dopyqo.eri_pair_densities.pair_density function.
+
+    Args:
+        c_ip_array (np.ndarray): Array of coefficients describing the Kohn-Sham orbitals \psi_i(p) and \psi_j(p) (\psi_i(p) = \psi_j(p))
+                                 in the plane wave basis,
+                                 shape (#bands_i, #grid_size, #grid_size, #grid_size)
+
+    Returns:
+        tuple[np.ndarray, np.ndarray]: Tuple (sum1, sum2) of summed pair densities in reciprocal space, shape (#grid_size, #grid_size, #grid_size)
+    """
+    assert len(calc_sums) == 2, f"calc_sums must have length 2 but has lenght {len(calc_sums)}!"
+    assert calc_sums[0] == True or calc_sums[1] == True, "Set at least one value in calc_sums to True, both are set to False!"
+    using_cupy = False
+
+    if use_gpu:
+        try:
+            import cupy as cp
+        except ImportError:
+            print(f"{ORANGE}Import warning: Could not import cupy package. Falling back to numpy.{RESET_COLOR}")
+            xp = np
+        else:  # No exception
+            xp = cp
+            using_cupy = True
+    else:
+        xp = np
+
+    my_context = nullcontext()
+    if using_cupy:
+        my_context = cp.cuda.Device(cp.cuda.runtime.getDeviceCount() - 1)  # Use last available GPU
+    with my_context:
+        dtype = xp.complex128
+
+        nbands_i = c_ip_array.shape[0]
+        nbands_j = nbands_i
+        ngrid = c_ip_array.shape[1:]
+
+        rho_ii_p_summed = None
+        if calc_sums[0] == True:
+            rho_ii_p_summed = np.zeros(ngrid, dtype)
+        rho_ij_p_summed = None
+        if calc_sums[1] == True:
+            rho_ij_p_summed = np.zeros(ngrid, dtype)
+
+        for i in range(nbands_i):
+            logging.info("Calculating pair density %s/%s ...", i + 1, nbands_i)
+            c_ip_shifted = xp.fft.ifftshift(c_ip_array[i])
+            psi_r_i_conj = xp.fft.ifftn(c_ip_shifted).conj()
+            #
+            range_start = i
+            #
+            for j in range(range_start, nbands_j):
+                c_jp_shifted = xp.fft.ifftshift(c_ip_array[j])
+                psi_r_j = xp.fft.ifftn(c_jp_shifted)
+
+                # psi*_i(r) . psi_j(r), where . is the standard multiplication
+                # Same as psi_i(p) * psi_j(p), where * is the convolution operation
+                rho_ij_r = psi_r_i_conj * psi_r_j
+
+                rho_ij_p_val = xp.fft.fftshift(xp.fft.fftn(rho_ij_r))
+
+                if using_cupy:
+                    rho_ij_p_val = xp.asnumpy(rho_ij_p_val)
+
+                if calc_sums[0] == True and i == j:
+                    rho_ii_p_summed += rho_ij_p_val
+                if calc_sums[1] == True:
+                    rho_ij_p_val_abs = np.abs(rho_ij_p_val) ** 2
+                    rho_ij_p_summed += rho_ij_p_val_abs
+                    if i != j:
+                        # \rho_ji(p)=\rho*_ij(-p)
+                        rho_ij_p_summed += np.flip(rho_ij_p_val_abs, (0, 1, 2))
+
+    return rho_ii_p_summed, rho_ij_p_summed
 
 
 def pair_density_real_space(
@@ -351,11 +526,11 @@ def get_frozen_core_energy_eri(
     mill: np.ndarray,
     cell_volume: float,
     fft_grid: np.ndarray | None = None,
-    rho_ij_p: np.ndarray | None = None,
+    rho_sums: tuple[np.ndarray, np.ndarray] | None = None,
     one_over_p_norm_squared_array: np.ndarray | None = None,
     use_gpu: bool = True,
 ) -> float:
-    r"""Calculate frozen core energy ERI part \sum_{ij}^{\mathrm{frozen}} (2h_{iijj} - h_{ijji})
+    r"""Calculate frozen core energy ERI part \sum_{ij}^{\mathrm{frozen}} (2h_{ijji} - h_{ijij})
 
     Args:
         p (np.ndarray): Array of momentum vectors, shape (#waves, 3)
@@ -366,7 +541,11 @@ def get_frozen_core_energy_eri(
         atom_positions (np.ndarray): 1D array of positions of each atom
         atomic_numbers (np.ndarray): 1D array of atomic number of each atom
         occupations_core (np.ndarray): Array of occupations of the core orbitals.
-        rho_ij_p (np.ndarray | None): Array of pair densities of shape (#bands, #bands, #nwaves_fft),
+        rho_sums (tuple[np.ndarray, np.ndarray] | None): Tuple of sums
+            sum1 = |\sum_i \rho_ii(p)|^2
+            and
+            sum2 = \sum_ij \rho*_ji(p) \rho_ji(p) = \sum_ij |\rho_ji(p)|^2,
+            each of shape (#nwaves_fft)
             where #nwaves_fft is the number of points in momentum space that are used in the Fourier transforms.
             Is calculated from c_ip_core if None. If not None one_over_p_norm_squared_array has to be given, too.
             Defaults to None.
@@ -377,6 +556,7 @@ def get_frozen_core_energy_eri(
     Returns:
         np.ndarray: ERIs in reciprocal space
     """
+    time_start_all_but_einsum = time.perf_counter()
     max_min = mill.max(axis=0) - mill.min(axis=0)
     if fft_grid is not None:
         assert isinstance(fft_grid, np.ndarray), f"fft_grid ({fft_grid}, type {type(fft_grid)}) is not a numpy array!"
@@ -394,12 +574,11 @@ def get_frozen_core_energy_eri(
     logging.info("FFT grid: %s", max_min)
 
     pre_calc = False  # Are the pair densities and 1/p² values given, if not calculated them
-    if rho_ij_p is not None or one_over_p_norm_squared_array is not None:
+    if rho_sums is not None or one_over_p_norm_squared_array is not None:
         assert (
-            rho_ij_p is not None and one_over_p_norm_squared_array is not None
+            rho_sums is not None and one_over_p_norm_squared_array is not None
         ), "Both rho_ij_p and one_over_p_norm_squared_array have to be given if one is given, but only one is given!"
-        assert rho_ij_p.shape[0] == rho_ij_p.shape[1] == rho_ij_p.shape[0] == c_ip_core.shape[0]
-        assert one_over_p_norm_squared_array.shape[0] == rho_ij_p.shape[2]
+        assert one_over_p_norm_squared_array.shape == rho_sums[0].shape and one_over_p_norm_squared_array.shape == rho_sums[1].shape
         pre_calc = True
 
     if not pre_calc:
@@ -432,42 +611,30 @@ def get_frozen_core_energy_eri(
         one_over_p_norm_squared_array = make_one_over_p_norm_squared_array(one_over_p_norm_squared_array, b, max_min)
 
         # Calculate pair density \rho_ij(p) in reciprocal space
-        rho_ij_p = pair_density(c_ip_array=c_ip_array, use_gpu=use_gpu)
+        rho_ii_p_summed, rho_ij_p_summed = pair_density_sums(c_ip_array=c_ip_array, use_gpu=use_gpu)
+        rho_ii_p_summed = np.abs(rho_ii_p_summed * prod(max_min)) ** 2
+        rho_ij_p_summed *= prod(max_min) ** 2
+    else:
+        rho_ii_p_summed = rho_sums[0]
+        rho_ij_p_summed = rho_sums[1]
+    time_dur_all_but_einsum = time.perf_counter() - time_start_all_but_einsum
+    logging.info(f"All but einsums took {time_dur_all_but_einsum} s")
 
     logging.info("Calc einsums (in get_frozen_core_energy_eri)...")
-    # 4\pi \sum_{ij} \sum_{p \neq 0} (2\rho_ij(-p)\rho_ij(p)-\rho_ii(-p)\rho_jj(p))/|p|²
+    # 4\pi \sum_{ij} \sum_{p \neq 0} (2\rho_ii(-p)\rho_jj(p)-\rho_ij(-p)\rho_ji(p))/|p|²
     #   and we get \rho_il(-p) from \rho_il(p) via inverting the x,y,z axes.
     #   alternatively one could use \rho_il(-p)=\rho*_li(p), which cannot be easily performed
     #       if i and l belong to different spaces, e.g. i belongs to the core and l belongs
     #       to an active space. And np.flip(...) seems to be faster than .conj() here.
     # 2 g_iijj - g_ijji, like in Yalouz et al, but they use chemists order
     # We use physicist order, therefore we use 2 g_ijji - g_ijij
-    rho_ij_p_prod = rho_ij_p * prod(max_min)
-    rho_ij_p_flip_prod = np.flip(rho_ij_p_prod, (2, 3, 4))
-    eri_energy = (
-        4
-        * np.pi
-        * (
-            2
-            * np.einsum(
-                "iixyz, jjxyz, xyz -> ij",  # ijji
-                rho_ij_p_flip_prod,
-                rho_ij_p_prod,
-                one_over_p_norm_squared_array,
-                optimize=True,  # larger memory footprint but faster
-            ).sum()
-            - np.einsum(
-                "ijxyz, jixyz, xyz -> ij",  # ijij
-                rho_ij_p_flip_prod,
-                rho_ij_p_prod,
-                one_over_p_norm_squared_array,
-                optimize=True,  # larger memory footprint but faster
-            ).sum()
-        )
-    )
+    time_start = time.perf_counter()
+    eri_energy = 2 * (rho_ii_p_summed * one_over_p_norm_squared_array).sum() - (rho_ij_p_summed * one_over_p_norm_squared_array).sum()
+    time_dur = time.perf_counter() - time_start
+    logging.info(f"eri_energy took {time_dur} s")
 
     # Rescaling of Fourier transforms
-    return eri_energy / cell_volume
+    return 4 * np.pi * eri_energy / cell_volume
 
 
 def get_frozen_core_energy(
@@ -629,6 +796,8 @@ def get_frozen_core_pot(
         np.ndarray | tuple[np.ndarray, float]: ERIs in reciprocal space or
             tuple of (ERIs in reciprocal space, frozen core energy) if calc_eri_energy is True
     """
+    time_start_all = time.perf_counter()
+    time_start_all_but_einsum = time.perf_counter()
     if calc_eri_energy:
         assert cell_volume is not None
 
@@ -692,15 +861,16 @@ def get_frozen_core_pot(
 
     logging.info("Calc pair densities...")
     # Calculate pair density \rho_ij(p) in reciprocal space
-    logging.info("Calc pair density core...")
-    rho_ij_p_core = pair_density(c_ip_array=c_ip_core_array, use_gpu=use_gpu)
+    logging.info("Calc pair density core sums...")
+    rho_ii_p_summed, rho_ij_p_summed = pair_density_sums(c_ip_array=c_ip_core_array, use_gpu=use_gpu, calc_sums=(True, calc_eri_energy))
+    rho_ii_p_summed = rho_ii_p_summed * prod(max_min)
     logging.info("Calc pair density active...")
     rho_tu_p_active = pair_density(c_ip_array=c_ip_active_array, use_gpu=use_gpu)
-    logging.info("Calc pair density active-core...")
-    rho_ti_p_active_core = pair_density(c_ip_array=c_ip_active_array, c_jp_array=c_ip_core_array, use_gpu=use_gpu)
     # Initialize ERI array
     # TODO: We do not need to calculate all matrix elements due to symmetries
     pot_mat = np.zeros((nbands_active, nbands_active), dtype=dtype)
+    time_dur_all_but_einsum = time.perf_counter() - time_start_all_but_einsum
+    logging.info(f"All but einsums took {time_dur_all_but_einsum} s")
 
     logging.info("Calc einsums...")
     # 2 g_tuii - g_tiiu, like in Yalouz et al, but they use chemists order
@@ -712,51 +882,62 @@ def get_frozen_core_pot(
 
     # h_{ijkl}=4\pi \sum_{p \neq 0} \rho_{il}(-p)\rho_{jk}(p)/|p|²
     # h_{tiiu}=4\pi \sum_{p \neq 0} \rho_{tu}(-p)\rho_{ii}(p)/|p|²
-    h_tiiu = (
+    logging.info("Calc einsum tuxyz, iixyz, xyz -> tiu")
+    time_start = time.perf_counter()
+    logging.info("Calc h_tiiu_sum")
+    h_tiiu_sum = (
         4
         * np.pi
         * np.einsum(
-            "tuxyz, iixyz, xyz -> tiu",  # tiiu, Physicists' order
+            "tuxyz, xyz, xyz -> tu",  # tiiu, Physicists' order
             np.flip(rho_tu_p_active, (2, 3, 4)) * prod(max_min),
-            rho_ij_p_core * prod(max_min),
+            rho_ii_p_summed,
             one_over_p_norm_squared_array,
             optimize=True,  # larger memory footprint but faster
         )
     )
+    time_dur = time.perf_counter() - time_start
+    logging.info(f"h_tiiu took {time_dur} s")
     # h_{ijkl}=4\pi \sum_{p \neq 0} \rho_{il}(-p)\rho_{jk}(p)/|p|²
     # h_{tiui}=4\pi \sum_{p \neq 0} \rho_{ti}(-p)\rho_{iu}(p)/|p|²
-    rho_ti_p_active_core_flip_prod = np.flip(rho_ti_p_active_core, (2, 3, 4)) * prod(max_min)
-    h_tiui = (
+    logging.info("Calc einsum tixyz, iuxyz, xyz -> tiu")
+    time_start = time.perf_counter()
+    rho_ti_p_active_core_sum = pair_density_conj_sum(c_ip_array=c_ip_active_array, c_kp_array=c_ip_core_array, use_gpu=use_gpu) * prod(max_min) ** 2
+    h_tiui_sum = (
         4
         * np.pi
         * np.einsum(
-            "tixyz, iuxyz, xyz -> tiu",  # tiui, Physicists' order
-            rho_ti_p_active_core_flip_prod,
-            # \rho_iu(p) = \rho*_ui(-p)
-            # swapaxes to bring indices in correct order, np.flip(...) and conj() do p->-p and \rho->\rho*
-            #   but not ui -> iu. Regardless of writing \rho_iu(p) or \rho*_ui(-p).
-            #   i always runs only over core orbitals while u always runs over active orbitals
-            rho_ti_p_active_core_flip_prod.conj().swapaxes(0, 1),  # \rho_iu(p) = \rho*_ui(-p)
+            "tuxyz, xyz -> tu",
+            rho_ti_p_active_core_sum,
             one_over_p_norm_squared_array,
             optimize=True,  # larger memory footprint but faster
         )
     )
+    time_dur = time.perf_counter() - time_start
+    logging.info(f"h_tiui took {time_dur} s")
 
-    pot_mat = 2 * h_tiiu.sum(1) - h_tiui.sum(1)
+    logging.info("Calc pot_mat...")
+    time_start = time.perf_counter()
+    pot_mat = 2 * h_tiiu_sum - h_tiui_sum
+    time_dur = time.perf_counter() - time_start
+    logging.info(f"pot_mat took {time_dur} s")
 
     if calc_eri_energy:
+        logging.info("Calc eri_energy...")
         eri_energy = get_frozen_core_energy_eri(
             c_ip_core=c_ip_core,
             b=b,
             mill=mill,
             cell_volume=cell_volume,
             fft_grid=max_min,
-            rho_ij_p=rho_ij_p_core,
+            rho_sums=(np.abs(rho_ii_p_summed) ** 2, rho_ij_p_summed * prod(max_min) ** 2),
             one_over_p_norm_squared_array=one_over_p_norm_squared_array,
             use_gpu=use_gpu,
         )
         return pot_mat, eri_energy
 
+    time_dur_all = time.perf_counter() - time_start_all
+    logging.info(f"Everything took {time_dur_all} s")
     return pot_mat
 
 
