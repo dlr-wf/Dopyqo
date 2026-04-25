@@ -23,6 +23,9 @@ This python package provides an interface between the [Quantum ESPRESSO (QE)](ht
 
 Dopyqo reads the output files of a QE calculation to build the Hamiltonian. The needed files are located in the .save folder that QE outputs and are the `data-file-schema.xml` and the `wfc.dat` or `wfc.hdf5` files.
 
+## Documentation
+The documentation can be found [here](https://dopyqo.readthedocs.io).
+
 ## Installation
 Install via pip using
 ```bash
