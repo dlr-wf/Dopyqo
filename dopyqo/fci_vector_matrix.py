@@ -1,6 +1,7 @@
 import numpy as np
 from qiskit.quantum_info import Statevector
 from pyscf.fci import FCIvector
+from dopyqo.colors import ORANGE, RESET_COLOR
 
 
 def largest_binary_with_same_number_of_ones(binary_string: str) -> bytes:
@@ -24,7 +25,7 @@ def closest_larger_binary_with_same_number_of_ones(binary_string: str) -> bytes 
 
     if len(new_binary_string) < len(binary_string):
         n_missing_zeros = len(binary_string) - len(new_binary_string)
-        new_binary_string = f"{'0'*n_missing_zeros}{new_binary_string}"
+        new_binary_string = f"{'0' * n_missing_zeros}{new_binary_string}"
 
     assert (l1 := len(new_binary_string)) == (l2 := len(binary_string)), (
         f"New binary string {new_binary_string} (length: {l1}) has not the same length "
@@ -65,7 +66,7 @@ def closest_larger_binary_with_same_spin(binary_string: str) -> bytes | None:
 
     if len(new_binary_string) < len(binary_string):
         n_missing_zeros = len(binary_string) - len(new_binary_string)
-        new_binary_string = f"{'0'*n_missing_zeros}{new_binary_string}"
+        new_binary_string = f"{'0' * n_missing_zeros}{new_binary_string}"
 
     assert (l1 := len(new_binary_string)) == (l2 := len(binary_string)), (
         f"New binary string {new_binary_string} (length: {l1}) has not the same length "
@@ -160,3 +161,33 @@ def statevector_from_civector_general(ffsim_state: np.ndarray, nelec: tuple[int,
         state_vec[idx] = ffsim_state[i]
 
     return Statevector(state_vec, dims=state_vec.shape[0])
+
+
+def fci_from_statevector(statevector: Statevector, nelec: tuple[int, int], norb: int):
+    base_str_up = "0" * (norb - nelec[0]) + "1" * nelec[0]
+    base_str_dw = "0" * (norb - nelec[1]) + "1" * nelec[1]
+
+    strs_up = [base_str_up]
+    while (val := closest_larger_binary_with_same_number_of_ones(strs_up[-1])) is not None:
+        strs_up.append(val)
+
+    strs_dw = [base_str_dw]
+    while (val := closest_larger_binary_with_same_number_of_ones(strs_dw[-1])) is not None:
+        strs_dw.append(val)
+
+    state_vec = np.asarray(statevector)
+    fci_vector = np.zeros((len(strs_up), len(strs_dw)), dtype=np.float64)
+
+    for i, str_up in enumerate(strs_up):
+        for j, str_dw in enumerate(strs_dw):
+            idx = int(str_up + str_dw, base=2)
+            val = state_vec[idx]
+            if not np.isclose(val.imag, 0.0):
+                print(
+                    f"{ORANGE}Statevector transformation warning: Statevector data has imaginary part -> returned FCI vector has imaginary part. PySCF FCI vectors that are not real may result in silent unexpected behavior when used with PySCF functions! E.g. wrong fci.spin_op.spin_square result without warning!{RESET_COLOR}"
+                )
+                fci_vector[i, j] = state_vec[idx]
+            else:
+                fci_vector[i, j] = state_vec[idx].real
+
+    return fci_vector.view(FCIvector)
