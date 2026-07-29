@@ -150,10 +150,16 @@ def pair_density(
         # rho_ij_p = xp.zeros((nbands_i, nbands_j, *ngrid), dtype)
         rho_ij_p = np.zeros((nbands_i, nbands_j, *ngrid), dtype)
 
+        # Precompute \psi_i(r)
+        psi_r_i_all = fft_ifftn(fft_ifftshift(c_ip_array, axes=(1, 2, 3)), axes=(1, 2, 3))
+        if c_jp_array_not_given:
+            psi_r_j_all = psi_r_i_all
+        else:
+            psi_r_j_all = fft_ifftn(fft_ifftshift(c_jp_array, axes=(1, 2, 3)), axes=(1, 2, 3))
+
         for i in range(nbands_i):
             logging.info("Calculating pair density %s/%s ...", i + 1, nbands_i)
-            c_ip_shifted = fft_ifftshift(c_ip_array[i])
-            psi_r_i_conj = fft_ifftn(c_ip_shifted).conj()
+            psi_r_i_conj = psi_r_i_all[i].conj()
             #
             if c_jp_array_not_given:
                 range_start = i
@@ -161,11 +167,7 @@ def pair_density(
                 range_start = 0
             #
             for j in range(range_start, nbands_j):
-                if c_jp_array_not_given:
-                    c_jp_shifted = fft_ifftshift(c_ip_array[j])
-                else:
-                    c_jp_shifted = fft_ifftshift(c_jp_array[j])
-                psi_r_j = fft_ifftn(c_jp_shifted)
+                psi_r_j = psi_r_j_all[j]
 
                 # psi*_i(r) . psi_j(r), where . is the standard multiplication
                 # Same as psi_i(p) * psi_j(p), where * is the convolution operation
@@ -238,14 +240,16 @@ def pair_density_conj_sum(
 
         fft_ifftshift, fft_ifftn, fft_fftn, fft_fftshift = _get_fft_funcs(using_cupy, xp, n_threads)
 
+        # Precompute \psi_i(r)
+        psi_r_j_all = fft_ifftn(fft_ifftshift(c_ip_array, axes=(1, 2, 3)), axes=(1, 2, 3))
+        psi_r_k_all = fft_ifftn(fft_ifftshift(c_kp_array, axes=(1, 2, 3)), axes=(1, 2, 3))
+
         for k in range(nbands_k):
             logging.info("Calculating pair density %s/%s ...", k + 1, nbands_k)
-            c_kp_shifted = fft_ifftshift(c_kp_array[k])
-            psi_r_k_conj = fft_ifftn(c_kp_shifted).conj()
+            psi_r_k_conj = psi_r_k_all[k].conj()
             #
             for j in range(nbands_i):
-                c_jp_shifted = fft_ifftshift(c_ip_array[j])
-                psi_r_j = fft_ifftn(c_jp_shifted)
+                psi_r_j = psi_r_j_all[j]
                 #
                 # psi*_i(r) . psi_j(r), where . is the standard multiplication
                 # Same as psi_i(p) * psi_j(p), where * is the convolution operation
@@ -257,8 +261,7 @@ def pair_density_conj_sum(
                 # range_start = 0
                 range_start = j
                 for i in range(range_start, nbands_i):
-                    c_ip_shifted = fft_ifftshift(c_ip_array[i])
-                    psi_r_i = fft_ifftn(c_ip_shifted)
+                    psi_r_i = psi_r_j_all[i]
                     #
                     # psi*_i(r) . psi_j(r), where . is the standard multiplication
                     # Same as psi_i(p) * psi_j(p), where * is the convolution operation
@@ -334,16 +337,17 @@ def pair_density_sums(
 
         fft_ifftshift, fft_ifftn, fft_fftn, fft_fftshift = _get_fft_funcs(using_cupy, xp, n_threads)
 
+        # Precompute \psi_i(r)
+        psi_r_all = fft_ifftn(fft_ifftshift(c_ip_array, axes=(1, 2, 3)), axes=(1, 2, 3))
+
         for i in range(nbands_i):
             logging.info("Calculating pair density %s/%s ...", i + 1, nbands_i)
-            c_ip_shifted = fft_ifftshift(c_ip_array[i])
-            psi_r_i_conj = fft_ifftn(c_ip_shifted).conj()
+            psi_r_i_conj = psi_r_all[i].conj()
             #
             range_start = i
             #
             for j in range(range_start, nbands_j):
-                c_jp_shifted = fft_ifftshift(c_ip_array[j])
-                psi_r_j = fft_ifftn(c_jp_shifted)
+                psi_r_j = psi_r_all[j]
 
                 # psi*_i(r) . psi_j(r), where . is the standard multiplication
                 # Same as psi_i(p) * psi_j(p), where * is the convolution operation
