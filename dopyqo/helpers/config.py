@@ -33,7 +33,9 @@ class DopyqoConfig:
         logging_flag (bool | None): If set to true, logging information will be shown. If None or False, no logging information will be shown. Defaults to None.
         n_threads (int | None): Number of threads used to calculate the pseudopotential when using the dopyqo-rs package,
                                 and number of threads used for the FFTs in the ERI/frozen-core matrix element calculation (via scipy.fft's
-                                `workers` argument) when running on CPU (i.e. use_gpu is False or cupy is unavailable). Set to 1 if None. Defaults to None.
+                                `workers` argument) when running on CPU (i.e. use_gpu is False or cupy is unavailable). Also passed to the
+                                `Hamiltonian` creation, which uses it to limit CPU usage of FCI and TenCirChem VQE calculations
+                                by globally setting `pyscf.lib.num_threads(self.n_threads)`. Set to 1 if None. Defaults to None.
         use_gpu (bool | None): If set to True, the GPU is used for ERI and frozen core matrix elements, if the cupy package is available.
                                If set to True and cupy package is not available, numpy will be used instead. Set to True if None. Defaults to None.
         wannier_transform (bool | None): If True, the orbitals in the active space are transformed into Wannier functions. See also wannier_umat and wannier_input_file.

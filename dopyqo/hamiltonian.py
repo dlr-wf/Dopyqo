@@ -23,6 +23,7 @@ from qiskit.circuit import QuantumCircuit
 from qiskit_nature.second_q.circuit.library import UCCSD, HartreeFock
 from qiskit.primitives import Estimator, StatevectorEstimator
 import pyscf.fci
+import pyscf.lib
 from pyscf import gto, scf, cc
 from pyscf.fci.cistring import str2addr
 import scipy
@@ -56,6 +57,9 @@ class Hamiltonian:
         occupations (np.ndarray): Occupations of the N spatial orbitals taking values either 0 or 1, and summing up to half of the number of electrons. Shape (N,)
         constants (float | dict[str, float], optional): Energy offset E_{const.} as float or dict of str, float pairs. Defaults to 0.0.
         reference_energy (float, optional): Reference energy used for VQE calculations. Defaults to 0.0.
+        n_threads (int | None, optional): If given, limits CPU usage of FCI and TenCirChem VQE calculations by globally setting
+                                          `pyscf.lib.num_threads(n_threads)` at the start of the corresponding solve methods.
+                                          If None, the process-wide default thread count is left untouched. Defaults to None.
     """
 
     def __init__(
@@ -65,6 +69,7 @@ class Hamiltonian:
         occupations: np.ndarray,
         constants: float | dict[str, float] = 0.0,
         reference_energy: float = 0.0,
+        n_threads: int | None = None,
     ):
         # TODO: Currently no support for spin-polarized h_pq, h_pqrs
         assert h_pq.ndim == 2
@@ -121,6 +126,7 @@ class Hamiltonian:
                 sys.exit(1)
         self.constants = constants
         self.reference_energy = reference_energy
+        self.n_threads = n_threads
 
         self.fci_energy = np.nan
         self.fci_solver: pyscf.fci.direct_spin1.FCIBase = pyscf.fci.direct_spin1.FCIBase()
@@ -413,6 +419,9 @@ class Hamiltonian:
         Returns:
             float: The energy of the ansatz
         """
+        if self.n_threads is not None:
+            pyscf.lib.num_threads(self.n_threads)
+
         import tencirchem
 
         # NOTE: TenCirChem can only simulate spin-restricted systems!
@@ -529,6 +538,9 @@ class Hamiltonian:
         Returns:
             scipy.optimize.OptimizeResult: Scipy optimization result
         """
+        if self.n_threads is not None:
+            pyscf.lib.num_threads(self.n_threads)
+
         import tencirchem
 
         # tencirchem.set_backend("cupy")
@@ -965,6 +977,9 @@ class Hamiltonian:
         Returns:
             scipy.optimize.OptimizeResult: Scipy optimization result
         """
+        if self.n_threads is not None:
+            pyscf.lib.num_threads(self.n_threads)
+
         import tencirchem
 
         # NOTE: TenCirChem can only simulate spin-restricted systems!
@@ -1313,6 +1328,9 @@ class Hamiltonian:
         Returns:
             np.ndarray: Computed FCI energies as a numpy array.
         """
+        if self.n_threads is not None:
+            pyscf.lib.num_threads(self.n_threads)
+
         energy_offset = self.constants
         if isinstance(self.constants, dict):
             energy_offset = sum(self.constant.values())
@@ -1378,6 +1396,9 @@ class Hamiltonian:
         Returns:
             np.ndarray: Computed FCI energies as a numpy array.
         """
+        if self.n_threads is not None:
+            pyscf.lib.num_threads(self.n_threads)
+
         energy_offset = self.constants
         if isinstance(self.constants, dict):
             energy_offset = sum(self.constant.values())
@@ -1487,6 +1508,9 @@ class Hamiltonian:
         Returns:
             np.ndarray: Computed FCI energies as a numpy array.
         """
+        if self.n_threads is not None:
+            pyscf.lib.num_threads(self.n_threads)
+
         # Calculate matrix elements
         h_ij_up, h_ij_dw = self.h_pq, self.h_pq
         eri_up, eri_dw, eri_dw_up, eri_up_dw = (

@@ -754,6 +754,7 @@ def run(
             occupations_active.copy(),
             reference_energy=reference_energy,
             constants=energy_frozen_core + energy_e_self + energy_ewald,
+            n_threads=config.n_threads,
         )
 
         ######################### RUN PySCF HF CALCULATION #########################
@@ -767,6 +768,7 @@ def run(
                 occupations_active.copy(),
                 reference_energy=reference_energy,
                 constants=energy_frozen_core + energy_e_self + energy_ewald,
+                n_threads=config.n_threads,
             )
 
         ######################### RUN FCI CALCULATION #########################
