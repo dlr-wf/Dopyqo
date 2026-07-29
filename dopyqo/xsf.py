@@ -2,7 +2,6 @@ import sys
 import itertools
 import numpy as np
 from itertools import product
-import pyvista as pv
 from dopyqo.colors import *
 
 # http://www.xcrysden.org/doc/XSF.html

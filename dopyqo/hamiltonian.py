@@ -25,7 +25,6 @@ from qiskit.primitives import Estimator, StatevectorEstimator
 import pyscf.fci
 from pyscf import gto, scf, cc
 from pyscf.fci.cistring import str2addr
-import tencirchem
 import scipy
 import dopyqo
 from dopyqo import calc_matrix_elements
@@ -414,6 +413,8 @@ class Hamiltonian:
         Returns:
             float: The energy of the ansatz
         """
+        import tencirchem
+
         # NOTE: TenCirChem can only simulate spin-restricted systems!
         nelec = (
             self.nelec,
@@ -528,6 +529,8 @@ class Hamiltonian:
         Returns:
             scipy.optimize.OptimizeResult: Scipy optimization result
         """
+        import tencirchem
+
         # tencirchem.set_backend("cupy")
         # NOTE: TenCirChem can only simulate spin-restricted systems!
 
@@ -962,6 +965,8 @@ class Hamiltonian:
         Returns:
             scipy.optimize.OptimizeResult: Scipy optimization result
         """
+        import tencirchem
+
         # NOTE: TenCirChem can only simulate spin-restricted systems!
 
         nelec = (

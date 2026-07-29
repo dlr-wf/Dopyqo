@@ -31,7 +31,9 @@ class DopyqoConfig:
                                        If string than only "all" is allowed and all k-points are calculated. Set to 0, if None.
                                        Defaults to None.
         logging_flag (bool | None): If set to true, logging information will be shown. If None or False, no logging information will be shown. Defaults to None.
-        n_threads (int | None): Number of threads used to calculate the pseudopotential when using the kohn-sham-matrix-elements-rs package. Set to 1 if None. Defaults to None.
+        n_threads (int | None): Number of threads used to calculate the pseudopotential when using the dopyqo-rs package,
+                                and number of threads used for the FFTs in the ERI/frozen-core matrix element calculation (via scipy.fft's
+                                `workers` argument) when running on CPU (i.e. use_gpu is False or cupy is unavailable). Set to 1 if None. Defaults to None.
         use_gpu (bool | None): If set to True, the GPU is used for ERI and frozen core matrix elements, if the cupy package is available.
                                If set to True and cupy package is not available, numpy will be used instead. Set to True if None. Defaults to None.
         wannier_transform (bool | None): If True, the orbitals in the active space are transformed into Wannier functions. See also wannier_umat and wannier_input_file.
@@ -467,7 +469,7 @@ class DopyqoConfig:
             object.__setattr__(self, "occupations", np.array([int(x) for x in self.occupations]))
             if not np.isclose(2.0 * np.sum(self.occupations), self.active_electrons):
                 print(
-                    f"{RED}Config error: Two times the occupations must sum to the number of electrons ({self.active_electrons}) but sum to {2.0*np.sum(self.occupations)}!{RESET_COLOR}",
+                    f"{RED}Config error: Two times the occupations must sum to the number of electrons ({self.active_electrons}) but sum to {2.0 * np.sum(self.occupations)}!{RESET_COLOR}",
                     file=sys.stderr,
                 )
                 sys.exit(1)

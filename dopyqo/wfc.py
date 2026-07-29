@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import sys
 import os
 import logging
@@ -6,15 +8,17 @@ import textwrap
 from warnings import warn
 from enum import Enum
 from collections import Counter
+from typing import TYPE_CHECKING
 import numpy as np
 import itertools
 from scipy.spatial import Voronoi
 import h5py
 import xmltodict
-import pyvista as pv
 import dopyqo
-from dopyqo import plotting
 from dopyqo.colors import *
+
+if TYPE_CHECKING:
+    import pyvista as pv
 
 
 class Wfc:
@@ -1124,6 +1128,9 @@ class Wfc:
         Returns:
             pv.Plotter: PyVista plotter object
         """
+        import pyvista as pv
+        from dopyqo import plotting
+
         max_min = psi_r[0].shape
 
         origin = np.zeros(3)

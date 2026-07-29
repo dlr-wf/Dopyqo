@@ -354,6 +354,7 @@ def run(
                         mill=wfc_obj.mill,
                         fft_grid=wfc_obj.fft_grid,
                         use_gpu=config.use_gpu,
+                        n_threads=config.n_threads,
                     )
                     / wfc_obj.cell_volume
                 )
@@ -393,6 +394,7 @@ def run(
                         occupations_core=occupations_core,
                         fft_grid=wfc_obj.fft_grid,
                         use_gpu=config.use_gpu,
+                        n_threads=config.n_threads,
                     )
                     energy_frozen_core = energy_frozen_core.real
                     time_energy_core = time.perf_counter() - start_time
@@ -409,6 +411,7 @@ def run(
                         fft_grid=wfc_obj.fft_grid,
                         cell_volume=wfc_obj.cell_volume,
                         use_gpu=config.use_gpu,
+                        n_threads=config.n_threads,
                     )
                     time_energy_core = time.perf_counter() - start_time
                     time_energy_core_str = (
@@ -430,6 +433,7 @@ def run(
                         pseudopots=pps,
                         fft_grid=wfc_obj.fft_grid,
                         use_gpu=config.use_gpu,
+                        n_threads=config.n_threads,
                     ).real
                     time_energy_core = time.perf_counter() - start_time
                     time_energy_core_str = (
