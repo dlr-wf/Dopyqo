@@ -49,6 +49,7 @@ class DopyqoConfig:
         run_vqe (bool | None): If set to True, a VQE calculation will be performed. Set to False if None. Defaults to None.
         run_fci (bool | None): If set to True, a FCI calculation will be performed. Set to False if None. Defaults to None.
         n_fci_energies (int | None): Number of energies calculated by the FCI solver. Set to 1 if None. Defaults to None.
+        save_statevectors (bool | None): If True, construct and save FCI and VQE statevectors. Set to False if None. Defaults to None.
         use_qiskit (bool | None): If set to True, qiskit is used to perform the VQE calculation. Set to False if None. Defaults to None.
         unit (units.Unit | None): Defines the unit used for the atom positions (see atom_positions) and lattice vectors (see lattice_vectors).
                                   Must not be None if either atom_positions or lattice_vectors are set. Defaults to None.
@@ -96,6 +97,7 @@ class DopyqoConfig:
     run_vqe: bool | None = None
     run_fci: bool | None = None
     n_fci_energies: int | None = None  # TODO: Add this to toml-input-file
+    save_statevectors: bool | None = None
     use_qiskit: bool | None = None
     unit: units.Unit | None = None
     atom_positions: np.ndarray | None = None
@@ -167,6 +169,8 @@ class DopyqoConfig:
             object.__setattr__(self, "run_fci", False)
         if self.run_fci and self.n_fci_energies is None:
             object.__setattr__(self, "n_fci_energies", 1)
+        if self.save_statevectors is None:
+            object.__setattr__(self, "save_statevectors", False)
         if self.atom_positions is not None:
             if self.unit is None:
                 allowed_units_str = "\n\t".join(units.ALLOWED_UNITS)

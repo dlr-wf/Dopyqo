@@ -783,7 +783,8 @@ def run(
                 fci_energy = h_ks.solve_fci_spin1(n_energies=config.n_fci_energies).real
                 if config.n_fci_energies == 1:
                     fci_energy = fci_energy[0]
-                fci_state = h_ks.fci_statevector()
+                if config.save_statevectors:
+                    fci_state = h_ks.fci_statevector()
             else:
                 fci_energy = h_ks.solve_fci(n_energies=config.n_fci_energies).real
                 if config.n_fci_energies == 1:
@@ -795,10 +796,7 @@ def run(
 
             if verbosity >= verbosity_summary:
                 print(f"\tTook {time_fci:.2f}s")
-            # TODO: Generalize fci_statevector to support statevector generated from solve_fci_general
-            if wfc_obj.gamma_only:
-                fci_state = h_ks.fci_statevector()
-            else:
+            if not wfc_obj.gamma_only:
                 print(
                     f"{ORANGE}FCI warning: The FCI statevector will not be saved. The FCI statevector cannot be calculated for a non-gamma-only calculation, yet!{RESET_COLOR}"
                 )
@@ -854,8 +852,9 @@ def run(
                         print(f"\tTook {time_vqe:.2f}s")
                         print(f"VQE Result:\n{h_ks.vqe_result}")
 
-                    vqe_state = h_ks.vqe_statevector_qiskit() if config.use_qiskit else h_ks.vqe_statevector()
-                    if verbosity >= verbosity_summary:
+                    if config.save_statevectors:
+                        vqe_state = h_ks.vqe_statevector_qiskit() if config.use_qiskit else h_ks.vqe_statevector()
+                    if verbosity >= verbosity_summary and config.save_statevectors:
                         print(f"VQE Statevector: {vqe_state.draw('latex_source')}")
 
                     if verbosity >= verbosity_summary:
@@ -914,8 +913,9 @@ def run(
                     print(f"{RED}Qiskit cannot be used with ADAPT-VQE, yet. Cannot calculate statevector!{RESET_COLOR}")
                     sys.exit(1)
                 # vqe_state = h_ks.vqe_statevector_qiskit() if config.use_qiskit else h_ks.vqe_statevector()
-                vqe_state = h_ks.vqe_statevector()
-                if verbosity >= verbosity_summary:
+                if config.save_statevectors:
+                    vqe_state = h_ks.vqe_statevector()
+                if verbosity >= verbosity_summary and config.save_statevectors:
                     print(f"VQE Statevector: {vqe_state.draw('latex_source')}")
 
                 if verbosity >= verbosity_summary:
@@ -940,7 +940,7 @@ def run(
                     fig.show()
 
         ######################### SAVE STATEVECTORS AND APPENDING RESULTS #########################
-        if config.run_fci or config.run_vqe:
+        if config.save_statevectors and (config.run_fci or config.run_vqe):
             logging.info("Saving statevectors...")
             filename = f"statevecs_{config.active_electrons}e_{config.active_orbitals}o.npz"
             np.savez(os.path.join(config.base_folder, filename), fci_state_data=fci_state.data, vqe_state_data=vqe_state.data)
