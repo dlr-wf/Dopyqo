@@ -142,7 +142,7 @@ def nuclear_repulsion_energy_ewald(
     # n_unordered = itertools.product(range(-n_max, n_max + 1), repeat=3)
     logging.debug("Generating unordered translation vectors...")
     t_vecs_unordered = [
-        [np.dot(lattice_vectors, np.array([nx, ny, nz])), [nx, ny, nz]]
+        [np.dot(np.array([nx, ny, nz]), lattice_vectors), [nx, ny, nz]]
         for nx, ny, nz in itertools.product(
             range(-n_max_x, n_max_x + 1),
             range(-n_max_y, n_max_y + 1),
@@ -180,23 +180,10 @@ def nuclear_repulsion_energy_ewald(
 
     e_long = 0.0  # reciprocal-space sum
 
-    # Estimate size of Miller indices grid using the cutoff-energy and reciprocal lattice vectors
-    # A simple, but not accurate enough, estimate would be gcutrho/|b_i| for i \in {1, 2, 3}
-    # Here we take the shape of the reciprocal lattice into account:
-    #       max[ gcutrho/(|b_i| + \sum_{j \neq i} b_i . b_j ) ] for i \in {1, 2, 3}
-    # TODO: To use the same grid QE uses we have to read the Miller indices used for the density,
-    #       which is probably saved in charge-density.dat.
-    #       Alternatively check how pymatgen chooses the reciprocal grid in its Ewald calculation method
-    b1 = lattice_vectors_reciprocal[0]
-    b2 = lattice_vectors_reciprocal[1]
-    b3 = lattice_vectors_reciprocal[2]
-    mill_max = max(
-        [
-            round(abs(gcut / (np.linalg.norm(b1) + np.dot(b1, b2) + np.dot(b1, b3)))),
-            round(abs(gcut / (np.linalg.norm(b2) + np.dot(b2, b1) + np.dot(b2, b3)))),
-            round(abs(gcut / (np.linalg.norm(b3) + np.dot(b3, b1) + np.dot(b3, b2)))),
-        ]
-    )
+    # Estimate size of Miller indices grid using the cutoff-energy and the real-space lattice
+    # vectors a_i (a_i . b_j = 2*pi*delta_ij). For G = kx*b1+ky*b2+kz*b3, we have
+    # a_i . G = 2*pi*k_i, so by Cauchy-Schwarz |k_i| <= |a_i|*|G|/(2*pi) <= |a_i|*gcutrho/(2*pi).
+    mill_max = max(round(abs(gcut * np.linalg.norm(a_i) / (2 * np.pi))) + 2 for a_i in lattice_vectors)
     x, y, z = np.meshgrid(
         np.arange(-mill_max, mill_max + 1),
         np.arange(-mill_max, mill_max + 1),
