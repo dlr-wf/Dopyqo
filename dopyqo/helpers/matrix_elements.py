@@ -27,6 +27,15 @@ class MatrixElements:
     """Electron self-energy"""
     transform_matrix: np.ndarray | None = None
     """Transformation matrix to transform matrix elements into a different basis. Used for Wannier transformations"""
+    d_h_pq_pp: np.ndarray | None = None
+    """Derivative of the pseudopotential part of the one-electron matrix elements with respect to each Cartesian atom
+    position, shape (n_atoms, 3, norb, norb). Populated only if calculate_atom_gradient is set in the DopyqoConfig."""
+    d_energy_ewald_atom: np.ndarray | None = None
+    """Derivative of the Ewald nuclear-repulsion energy with respect to each Cartesian atom position, shape (n_atoms, 3).
+    Populated only if calculate_atom_gradient is set in the DopyqoConfig."""
+    d_energy_frozen_core_atom: np.ndarray | None = None
+    """Derivative of the frozen-core energy with respect to each Cartesian atom position, shape (n_atoms, 3).
+    Populated only if calculate_atom_gradient is set in the DopyqoConfig; zero if there are no core orbitals."""
 
     @property
     def h_pq(self) -> np.ndarray:

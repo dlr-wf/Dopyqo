@@ -1,38 +1,33 @@
-import sys
 import logging
-from warnings import warn
-import os
+import sys
 import time
-import copy
-from enum import Enum
+
 import numpy as np
-from qiskit.quantum_info import Statevector
+import pyscf.fci
+import pyscf.lib
+import qiskit_algorithms.optimizers as optim
+import scipy
+from pyscf import cc, gto, scf
+from qiskit.circuit import QuantumCircuit
+from qiskit.primitives import Estimator, StatevectorEstimator
+from qiskit.quantum_info import SparsePauliOp, Statevector
+from qiskit_algorithms.minimum_eigensolvers import VQE, VQEResult
+from qiskit_nature.second_q.circuit.library import UCCSD, HartreeFock
+from qiskit_nature.second_q.hamiltonians import ElectronicEnergy
+from qiskit_nature.second_q.mappers import JordanWignerMapper
+from qiskit_nature.second_q.mappers.fermionic_mapper import FermionicMapper
+from qiskit_nature.second_q.operators import ElectronicIntegrals
+from qiskit_nature.second_q.problems import ElectronicStructureProblem
 from qiskit_nature.second_q.problems.electronic_structure_result import (
     ElectronicStructureResult,
 )
-from qiskit_algorithms.minimum_eigensolvers.vqe import VQEResult
-from qiskit.quantum_info import SparsePauliOp
-from qiskit_nature.second_q.hamiltonians import ElectronicEnergy
-from qiskit_nature.second_q.problems import ElectronicStructureProblem
-from qiskit_nature.second_q.operators import ElectronicIntegrals
-from qiskit_algorithms.minimum_eigensolvers import VQE, VQEResult
-from qiskit_nature.second_q.mappers import JordanWignerMapper
-from qiskit_nature.second_q.mappers.fermionic_mapper import FermionicMapper
-import qiskit_algorithms.optimizers as optim
-from qiskit.circuit import QuantumCircuit
-from qiskit_nature.second_q.circuit.library import UCCSD, HartreeFock
-from qiskit.primitives import Estimator, StatevectorEstimator
-import pyscf.fci
-import pyscf.lib
-from pyscf import gto, scf, cc
-from pyscf.fci.cistring import str2addr
-import scipy
+
 import dopyqo
-from dopyqo import calc_matrix_elements
 import dopyqo.fci_vector_matrix
-from dopyqo.helpers import tcc_helpers
-from dopyqo import fci_vector_matrix
+from dopyqo import calc_matrix_elements, fci_vector_matrix
 from dopyqo.colors import *
+from dopyqo.helpers import tcc_helpers
+from dopyqo.helpers.vqe_helpers import AdaptSelectionCriterion, ExcitationPools, VQEOptimizers
 
 
 def transform_index(i, n_orbitals):
@@ -40,6 +35,97 @@ def transform_index(i, n_orbitals):
     i_orbital = i // 2
     i_spin = i % 2
     return i_orbital + n_orbitals * i_spin
+
+
+def energy_from_fci_civector(h_pq: np.ndarray, h_pqrs: np.ndarray, civector: np.ndarray, norb: int, nelec: int) -> float:
+    """Energy <civector|H|civector> for arbitrary one-/two-body integrals h_pq/h_pqrs, evaluated
+    against a pyscf/FCI-format civector (shape (na, nb), e.g. Hamiltonian.fci_evcs[0]).
+
+    Args:
+        h_pq (np.ndarray): One-electron matrix elements. Shape (norb, norb).
+        h_pqrs (np.ndarray): Two-electron matrix elements (physicist order). Shape (norb, norb, norb, norb).
+        civector (np.ndarray): pyscf FCI civector, shape (na, nb).
+        norb (int): Number of spatial orbitals.
+        nelec (int): Number of electrons per spin channel.
+
+    Returns:
+        float: The energy expectation value.
+    """
+
+    assert h_pq.shape == (norb, norb)
+    assert h_pqrs.shape == (norb, norb, norb, norb)
+    h_pqrs_chemist = h_pqrs.real.swapaxes(1, 2).swapaxes(1, 3)
+    return pyscf.fci.direct_spin1.energy(h_pq.real, h_pqrs_chemist, civector, norb, (nelec, nelec))
+
+
+def energy_from_tcc_civector(h_pq: np.ndarray, h_pqrs: np.ndarray, tcc_civector: np.ndarray, norb: int, nelec: int) -> float:
+    """Energy <civector|H|civector> for arbitrary one-/two-body integrals h_pq/h_pqrs, evaluated
+    against a TenCirChem `UCCSD.civector(params)` output.
+
+    Reshapes tcc_civector to the pyscf (na, nb), then calls energy_from_fci_civector.
+
+    Args:
+        h_pq (np.ndarray): One-electron matrix elements. Shape (norb, norb).
+        h_pqrs (np.ndarray): Two-electron matrix elements (physicist order). Shape (norb, norb, norb, norb).
+        tcc_civector (np.ndarray): TenCirChem civector, flat array of size na * nb.
+        norb (int): Number of spatial orbitals.
+        nelec (int): Number of electrons per spin channel.
+
+    Returns:
+        float: The energy expectation value.
+    """
+    dim_spin = np.sqrt(tcc_civector.size)
+    if not np.isclose(int(dim_spin), dim_spin):
+        print(
+            f"{RED}energy_from_tcc_civector error: Size of TenCirChem civector ({tcc_civector.size}) is not n^2 "
+            f"(n={dim_spin}) where n should be a squared integer. This should not happen. Please, contact a developer!{RESET_COLOR}"
+        )
+        sys.exit(1)
+    dim_spin = int(dim_spin)
+    civector = tcc_civector.reshape((dim_spin, dim_spin))
+    return energy_from_fci_civector(h_pq, h_pqrs, civector, norb, nelec)
+
+
+def energy_from_qiskit_circuit(
+    h_pq: np.ndarray,
+    h_pqrs: np.ndarray,
+    constants: float | dict[str, float],
+    norb: int,
+    nelec: int,
+    circuit: QuantumCircuit,
+    mapper: FermionicMapper | None = None,
+) -> float:
+    """Energy <state|H|state> for arbitrary one-/two-body integrals h_pq/h_pqrs and constants,
+    evaluated against the state prepared by a qiskit QuantumCircuit.
+
+    Args:
+        h_pq (np.ndarray): One-electron matrix elements. Shape (norb, norb).
+        h_pqrs (np.ndarray): Two-electron matrix elements. Shape (norb, norb, norb, norb).
+        constants (float | dict[str, float]): Energy offset(s) to add on top of the qubit-operator expectation value.
+        norb (int): Number of spatial orbitals.
+        nelec (int): Number of electrons per spin channel.
+        circuit (QuantumCircuit): Qiskit circuit preparing the state to evaluate the energy of.
+        mapper (FermionicMapper | None, optional): Fermion-to-qubit mapper. Defaults to JordanWignerMapper().
+
+    Returns:
+        float: The energy expectation value.
+    """
+    assert h_pq.shape == (norb, norb)
+    assert h_pqrs.shape == (norb, norb, norb, norb)
+    assert 0 <= nelec <= norb, f"nelec ({nelec}) must be between 0 and norb ({norb})"
+    if mapper is None:
+        mapper = JordanWignerMapper()
+
+    integrals = ElectronicIntegrals.from_raw_integrals(h_pq, h_pqrs)
+    qiskit_energy = ElectronicEnergy(integrals)
+    fermionic_op = qiskit_energy.second_q_op()
+    pauli_sum_op = mapper.map(fermionic_op)
+
+    estimator = StatevectorEstimator()
+    energy = estimator.run([(circuit, pauli_sum_op)]).result()[0].data.evs
+
+    constants_sum = sum(constants.values()) if isinstance(constants, dict) else constants
+    return float(np.real(energy + constants_sum))
 
 
 class Hamiltonian:
@@ -516,12 +602,12 @@ class Hamiltonian:
 
     def solve_vqe(
         self,
-        optimizer: dopyqo.VQEOptimizers = dopyqo.VQEOptimizers.L_BFGS_B,
+        optimizer: VQEOptimizers = VQEOptimizers.L_BFGS_B,
         UCCSD_reps: int = 1,
         qiskit_equivalent: bool = False,
         initial_params: np.ndarray | None = None,
         maxiter: int | None = None,
-        excitations: list[tuple[int, ...]] | dopyqo.ExcitationPools = dopyqo.ExcitationPools.SINGLES_DOUBLES,
+        excitations: list[tuple[int, ...]] | ExcitationPools = ExcitationPools.SINGLES_DOUBLES,
     ) -> scipy.optimize.OptimizeResult:
         """Run a VQE optimization with TenCirChem and a UCCSD ansatz. The initial state, that is prepared before the parametrized ansatz is applied,
         is a Slater determinant matching self.occupations.
@@ -606,11 +692,11 @@ class Hamiltonian:
             doubles_tcc_sorted = sorted([(*sorted(x[:2]), *sorted(x[2:])) for x in doubles_tcc])
 
             match excitations:
-                case dopyqo.ExcitationPools.SINGLES:
+                case ExcitationPools.SINGLES:
                     excitation_list = singles_tcc_sorted
-                case dopyqo.ExcitationPools.DOUBLES:
+                case ExcitationPools.DOUBLES:
                     excitation_list = doubles_tcc_sorted
-                case dopyqo.ExcitationPools.SINGLES_DOUBLES:
+                case ExcitationPools.SINGLES_DOUBLES:
                     excitation_list = doubles_tcc_sorted + singles_tcc_sorted
                 case _:
                     print(
@@ -719,15 +805,15 @@ class Hamiltonian:
         logging.info("Using optimizer %s", optimizer)
 
         match optimizer:
-            case dopyqo.VQEOptimizers.COBYLA:
+            case VQEOptimizers.COBYLA:
                 maxiter = 1e6 if maxiter is None else maxiter
                 options = dict(maxiter=maxiter, tol=1e-10)
                 optimizer_func = "COBYLA"
-            case dopyqo.VQEOptimizers.L_BFGS_B:
+            case VQEOptimizers.L_BFGS_B:
                 maxiter = 1e6 if maxiter is None else maxiter
                 options = dict(maxfun=maxiter * 4 * tcc_uccsd.n_params, maxiter=maxiter, ftol=1e-13)
                 optimizer_func = "L-BFGS-B"
-            case dopyqo.VQEOptimizers.ExcitationSolve:
+            case VQEOptimizers.ExcitationSolve:
                 from excitationsolve import ExcitationSolveScipy
 
                 maxiter = 100 if maxiter is None else maxiter
@@ -741,7 +827,7 @@ class Hamiltonian:
         params_tcc = res_tcc.x
 
         match optimizer:
-            case dopyqo.VQEOptimizers.ExcitationSolve:
+            case VQEOptimizers.ExcitationSolve:
                 counts_tcc = excsolve_obj.nfevs
                 values_tcc = excsolve_obj.energies
                 tcc_vqe_params_lst = excsolve_obj.params
@@ -766,11 +852,11 @@ class Hamiltonian:
 
     def solve_vqe_qiskit(
         self,
-        optimizer: dopyqo.VQEOptimizers = dopyqo.VQEOptimizers.L_BFGS_B,
+        optimizer: VQEOptimizers = VQEOptimizers.L_BFGS_B,
         UCCSD_reps: int = 1,
         mapper: FermionicMapper | None = JordanWignerMapper(),
         maxiter: int | None = None,
-        excitations: list[tuple[int, ...]] | dopyqo.ExcitationPools = dopyqo.ExcitationPools.SINGLES_DOUBLES,
+        excitations: list[tuple[int, ...]] | ExcitationPools = ExcitationPools.SINGLES_DOUBLES,
     ) -> VQEResult:
         """Run a VQE optimization with Qiskit and a UCCSD ansatz. The initial state, that is prepared before the parametrized ansatz is applied,
         is a Slater determinant matching self.occupations.
@@ -854,11 +940,11 @@ class Hamiltonian:
         doubles = [op for (op, excitation) in zip(ansatz.operators, ansatz.excitation_list) if len(excitation[0]) == 2]
         singles = [op for (op, excitation) in zip(ansatz.operators, ansatz.excitation_list) if len(excitation[0]) == 1]
         match excitations:
-            case dopyqo.ExcitationPools.SINGLES:
+            case ExcitationPools.SINGLES:
                 ansatz.operators = singles
-            case dopyqo.ExcitationPools.DOUBLES:
+            case ExcitationPools.DOUBLES:
                 ansatz.operators = doubles
-            case dopyqo.ExcitationPools.SINGLES_DOUBLES:
+            case ExcitationPools.SINGLES_DOUBLES:
                 ansatz.operators = doubles + singles
             case _:
                 print(f"{RED}VQE error: Parameter {excitations=} is not supported. Use dopyqo.ExcitationPools types!{RESET_COLOR}")
@@ -874,13 +960,13 @@ class Hamiltonian:
         # ansatz.draw("mpl", filename=os.path.join("results", "vqe_ansatz"))
 
         match optimizer:
-            case dopyqo.VQEOptimizers.COBYLA:
+            case VQEOptimizers.COBYLA:
                 maxiter = 1e6 if maxiter is None else maxiter
                 optimizer_obj = optim.COBYLA(maxiter=maxiter, tol=1e-13)
-            case dopyqo.VQEOptimizers.L_BFGS_B:
+            case VQEOptimizers.L_BFGS_B:
                 maxiter = 1e6 if maxiter is None else maxiter
                 optimizer_obj = optim.L_BFGS_B(maxfun=maxiter * 4 * len(ansatz.operators), maxiter=maxiter, ftol=1e-13)
-            case dopyqo.VQEOptimizers.ExcitationSolve:
+            case VQEOptimizers.ExcitationSolve:
                 from excitationsolve.excitation_solve_qiskit import ExcitationSolveQiskit
 
                 maxiter = 100 if maxiter is None else maxiter
@@ -919,7 +1005,7 @@ class Hamiltonian:
         elec_struc_result = problem.interpret(vqe_result)
 
         match optimizer:
-            case dopyqo.VQEOptimizers.ExcitationSolve:
+            case VQEOptimizers.ExcitationSolve:
                 counts = optimizer_obj.nfevs
                 values = optimizer_obj.energies
 
@@ -946,12 +1032,12 @@ class Hamiltonian:
 
     def solve_vqe_adapt(
         self,
-        optimizer: dopyqo.VQEOptimizers = dopyqo.VQEOptimizers.L_BFGS_B,
+        optimizer: VQEOptimizers = VQEOptimizers.L_BFGS_B,
         maxiter: int | None = None,
-        excitation_pool: list[tuple[int, ...]] | dopyqo.ExcitationPools = dopyqo.ExcitationPools.SINGLES_DOUBLES,
+        excitation_pool: list[tuple[int, ...]] | ExcitationPools = ExcitationPools.SINGLES_DOUBLES,
         drain_pool: bool = True,
         conv_threshold: float = 1e-13,
-        selection_criterion: dopyqo.AdaptSelectionCriterion = dopyqo.AdaptSelectionCriterion.ENERGY,
+        selection_criterion: AdaptSelectionCriterion = AdaptSelectionCriterion.ENERGY,
     ) -> scipy.optimize.OptimizeResult:
         """Run a ADAPT-VQE optimization with TenCirChem given a pool of excitations. The initial state,
         that is prepared before the parametrized ansatz is applied, is a Slater determinant matching self.occupations.
@@ -1044,11 +1130,11 @@ class Hamiltonian:
             doubles_tcc_sorted = sorted([(*sorted(x[:2]), *sorted(x[2:])) for x in doubles_tcc])
 
             match excitation_pool:
-                case dopyqo.ExcitationPools.SINGLES:
+                case ExcitationPools.SINGLES:
                     excitation_pool = singles_tcc_sorted
-                case dopyqo.ExcitationPools.DOUBLES:
+                case ExcitationPools.DOUBLES:
                     excitation_pool = doubles_tcc_sorted
-                case dopyqo.ExcitationPools.SINGLES_DOUBLES:
+                case ExcitationPools.SINGLES_DOUBLES:
                     excitation_pool = singles_tcc_sorted + doubles_tcc_sorted
                 case _:
                     print(
@@ -1137,7 +1223,7 @@ class Hamiltonian:
         initial_param = 0.0
         current_energy = self.hf_energy()
         match selection_criterion:
-            case dopyqo.AdaptSelectionCriterion.ENERGY:
+            case AdaptSelectionCriterion.ENERGY:
                 try:
                     from excitationsolve import ExcitationSolveScipy
                 except ImportError:
@@ -1155,7 +1241,7 @@ class Hamiltonian:
                 ansatz.ex_ops = current_ansatz_excs + [exc]
 
                 match selection_criterion:
-                    case dopyqo.AdaptSelectionCriterion.ENERGY:
+                    case AdaptSelectionCriterion.ENERGY:
                         # Using ExcitationSolve for operator selection
                         excsolve_obj = ExcitationSolveScipy(maxiter=1, tol=1e-10, save_parameters=True)
                         optimizer_func = excsolve_obj.minimize
@@ -1173,7 +1259,7 @@ class Hamiltonian:
                         values_tcc.append(res_tcc.fun)
                         tcc_vqe_params_lst = tcc_vqe_params_lst[: -excsolve_obj.nfevs[-1]]
                         tcc_vqe_params_lst.append(res_tcc.x)
-                    case dopyqo.AdaptSelectionCriterion.GRADIENT:
+                    case AdaptSelectionCriterion.GRADIENT:
                         # Compute d/dθ <ψ(θ)|H|ψ(θ)> at θ=0: Equivalent to <ψ(θ)|[H, A]|ψ(θ)> where A is the excitation exc
                         _nrg, grad = ansatz.energy_and_grad(np.append(current_params, 0.0))
                         grad = grad[-1]
@@ -1206,15 +1292,15 @@ class Hamiltonian:
             # Optimize all parameters
             logging.info("Using optimizer %s", optimizer)
             match optimizer:
-                case dopyqo.VQEOptimizers.COBYLA:
+                case VQEOptimizers.COBYLA:
                     maxiter = 1e6 if maxiter is None else maxiter
                     options = dict(maxiter=maxiter, tol=1e-10)
                     optimizer_func = "COBYLA"
-                case dopyqo.VQEOptimizers.L_BFGS_B:
+                case VQEOptimizers.L_BFGS_B:
                     maxiter = 1e6 if maxiter is None else maxiter
                     options = dict(maxfun=maxiter * 4 * ansatz.n_params, maxiter=maxiter, ftol=1e-13)
                     optimizer_func = "L-BFGS-B"
-                case dopyqo.VQEOptimizers.ExcitationSolve:
+                case VQEOptimizers.ExcitationSolve:
                     # TODO: If ExcSolve is used and there is only one operator in the ansatz,
                     #       we do not need to optimize here since ExcSolve already initialized the parameter in its optimal value
                     maxiter = 100 if maxiter is None else maxiter
@@ -1226,7 +1312,7 @@ class Hamiltonian:
                     sys.exit(1)
             res_tcc = scipy.optimize.minimize(cost, current_params, method=optimizer_func, options=options)
             match optimizer:
-                case dopyqo.VQEOptimizers.ExcitationSolve:
+                case VQEOptimizers.ExcitationSolve:
                     counts_tcc_excsolve.extend(np.array(excsolve_obj.nfevs) + eval_count_tcc_excsolve)
                     eval_count_tcc_excsolve += excsolve_obj.nfevs[-1]
                     values_tcc_excsolve.extend(excsolve_obj.energies)
@@ -1248,7 +1334,7 @@ class Hamiltonian:
         params_tcc = current_params
 
         match optimizer:
-            case dopyqo.VQEOptimizers.ExcitationSolve:
+            case VQEOptimizers.ExcitationSolve:
                 counts_tcc = counts_tcc_excsolve
                 values_tcc = values_tcc_excsolve
                 tcc_vqe_params_lst = tcc_vqe_params_lst_excsolve

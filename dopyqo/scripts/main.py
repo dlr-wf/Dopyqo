@@ -1,26 +1,25 @@
-import sys
-import os
-import time
-import logging
-import warnings
+from __future__ import annotations
+
 import argparse
-import re
-import tomllib
+import logging
+import os
+import sys
 import textwrap
-from dataclasses import dataclass, asdict
+import time
+import warnings
 from contextlib import nullcontext
+
 import numpy as np
-import xmltodict
 import termplotlib as tplt
 from qiskit.quantum_info import Statevector
+
 import dopyqo
-from dopyqo.fci_vector_matrix import statevector_from_fci
-from dopyqo import units
-from dopyqo.scripts import banners
-from dopyqo.colors import *
-from dopyqo import DopyqoConfig
+import dopyqo.gradients_atom_positions
 import dopyqo.wannier90
 import dopyqo.wfc
+from dopyqo import DopyqoConfig
+from dopyqo.colors import *
+from dopyqo.scripts import banners
 
 
 def has_save_folder(folder: str) -> str | None:
@@ -67,7 +66,7 @@ def run(
 
     if show_mat_calc_progress:
         try:
-            from rich.progress import Progress, TextColumn, TimeElapsedColumn, SpinnerColumn
+            from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
         except ImportError:
             show_mat_calc_progress = False
             print(f"{ORANGE}Import warning: Could not import rich package. Matrix calculation progress will not be shown.{RESET_COLOR}")
@@ -116,6 +115,10 @@ def run(
             print(f"Using Wannier functions:   {yes_color}YES{RESET_COLOR} ({msg_tmp})")
         else:
             print(f"Using Wannier functions:   {no_color}NO{RESET_COLOR}")
+        if config.calculate_atom_gradient:
+            print(f"Calculating gradient w.r.t. atom positions: {yes_color}YES{RESET_COLOR}")
+        else:
+            print(f"Calculating gradient w.r.t. atom positions: {no_color}NO{RESET_COLOR}")
         if config.run_fci:
             print(f"Running a FCI calculation: {yes_color}YES{RESET_COLOR}")
         else:
@@ -234,7 +237,7 @@ def run(
         if len(wfc_obj_lst) > 1 and verbosity >= verbosity_summary:
             print()
             dopyqo.print_block(
-                f"k-point {wfc_idx+1}/{len(wfc_obj_lst)}\n{wfc_obj.kpoint}\nweight: {wfc_obj.kpoint_weight}", color=block_color, flush=True
+                f"k-point {wfc_idx + 1}/{len(wfc_obj_lst)}\n{wfc_obj.kpoint}\nweight: {wfc_obj.kpoint_weight}", color=block_color, flush=True
             )
         overlaps_ncpp = wfc_obj.get_overlaps()
         if not np.allclose(overlaps_ncpp, np.eye(overlaps_ncpp.shape[0])):
@@ -333,6 +336,23 @@ def run(
                 logging.info("Loading pseudopotentials...")
                 time_pp_str = "- Given by " + f"{mats.h_pq_pp=}".split("=")[0] + " parameter"
 
+        ######################### PSEUDOPOTENTIAL GRADIENT WRT ATOM POSITIONS #########################
+        d_h_pq_pp = mats.d_h_pq_pp
+        if config.calculate_atom_gradient and d_h_pq_pp is None:
+            logging.info("Calculate pseudopotential gradient wrt atom positions...")
+            start_time = time.perf_counter()
+            d_h_pq_pp = dopyqo.gradients_atom_positions.calc_gradient_pps_wrt_atom_positions(
+                p,
+                c_ip_active,
+                wfc_obj.cell_volume,
+                wfc_obj.atom_positions_hartree,
+                wfc_obj.atomic_numbers,
+                pps,
+                n_threads=config.n_threads,
+            )
+            time_pp_grad = time.perf_counter() - start_time
+            logging.info("Pseudopotential gradient calc. took %.2fs", time_pp_grad)
+
         ######################### ELECTRON REPULSION INTEGRALS #########################
         my_context = nullcontext()
         if show_mat_calc_progress:
@@ -344,7 +364,6 @@ def run(
                 print("Calculating electron repulsion integrals...", flush=True)
             h_pqrs = mats.h_pqrs
             if h_pqrs is None:
-
                 logging.info("Calculate ERIs...")
                 start_time = time.perf_counter()
                 h_pqrs: np.ndarray = (
@@ -445,6 +464,27 @@ def run(
                         "- Given by " + f"{mats.h_pq_core=}".split("=")[0] + " and " + f"{mats.energy_frozen_core=}".split("=")[0] + " parameters"
                     )
 
+        ######################### FROZEN CORE ENERGY GRADIENT WRT ATOM POSITIONS #########################
+        d_energy_frozen_core_atom = mats.d_energy_frozen_core_atom
+        if config.calculate_atom_gradient and d_energy_frozen_core_atom is None:
+            if len(c_ip_core) > 0:
+                logging.info("Calculate frozen core energy gradient wrt atom positions...")
+                start_time = time.perf_counter()
+                d_energy_frozen_core_atom = dopyqo.gradients_atom_positions.gradient_frozen_core_energy_wrt_atom_positions(
+                    p,
+                    c_ip_core,
+                    wfc_obj.cell_volume,
+                    wfc_obj.atom_positions_hartree,
+                    wfc_obj.atomic_numbers,
+                    pps,
+                    n_threads=config.n_threads,
+                )
+                time_frozen_core_grad = time.perf_counter() - start_time
+                logging.info("Frozen core energy gradient calc. took %.2fs", time_frozen_core_grad)
+            else:
+                # No frozen core: derivative is zero.
+                d_energy_frozen_core_atom = np.zeros((wfc_obj.atom_positions_hartree.shape[0], 3))
+
         ######################### NUCLEAR REPULSION #########################
         my_context = nullcontext()
         if show_mat_calc_progress:
@@ -486,7 +526,7 @@ def run(
                     )
                     if config.atom_positions is None and config.lattice_vectors is None and not np.isclose(energy_ewald, wfc_obj.ewald):
                         print(
-                            f"{ORANGE}Ewald warning: Calculated Ewald energy is not close to the QE Ewald energy (QE: {wfc_obj.ewald}, Dopyqo: {energy_ewald.real}, Diff. {np.abs(energy_ewald-wfc_obj.ewald)})!{RESET_COLOR}"
+                            f"{ORANGE}Ewald warning: Calculated Ewald energy is not close to the QE Ewald energy (QE: {wfc_obj.ewald}, Dopyqo: {energy_ewald.real}, Diff. {np.abs(energy_ewald - wfc_obj.ewald)})!{RESET_COLOR}"
                         )
                     overlap = np.einsum("ij, kj -> ik", c_ip_active.conj(), c_ip_active)
                     h_pq_ewald = overlap * energy_ewald
@@ -508,6 +548,24 @@ def run(
                     )
                 logging.info("Loading nuclear repulsion...")
                 time_nucl_rep_str = "- Given by " + f"{mats.energy_ewald=}".split("=")[0] + " parameter"
+
+        ######################### NUCLEAR REPULSION GRADIENT WRT ATOM POSITIONS #########################
+        d_energy_ewald_atom = mats.d_energy_ewald_atom
+        if config.calculate_atom_gradient and d_energy_ewald_atom is None:
+            logging.info("Calculate Ewald energy gradient wrt atom positions...")
+            start_time = time.perf_counter()
+            lattice_vectors = np.array([wfc_obj.a1, wfc_obj.a2, wfc_obj.a3])
+            lattice_vectors_reciprocal = np.array([wfc_obj.b1, wfc_obj.b2, wfc_obj.b3])
+            d_energy_ewald_atom = dopyqo.gradients_atom_positions.gradient_nuclear_repulsion_energy_ewald_wrt_atom_positions(
+                wfc_obj.atom_positions_hartree,
+                wfc_obj.atomic_numbers_valence,
+                lattice_vectors,
+                lattice_vectors_reciprocal,
+                wfc_obj.cell_volume,
+                wfc_obj.gcutrho,
+            )
+            time_ewald_grad = time.perf_counter() - start_time
+            logging.info("Ewald energy gradient calc. took %.2fs", time_ewald_grad)
 
         h_pq = iTj_orbitals + pp_orbitals + h_pq_core  # + h_pq_ewald
 
@@ -734,6 +792,9 @@ def run(
             energy_ewald=energy_ewald,
             energy_e_self=energy_e_self,
             transform_matrix=None if not config.wannier_transform else transform_matrix,
+            d_h_pq_pp=d_h_pq_pp,
+            d_energy_ewald_atom=d_energy_ewald_atom,
+            d_energy_frozen_core_atom=d_energy_frozen_core_atom,
             mats=dopyqo.MatrixElements(
                 h_pq_kin=iTj_orbitals,
                 h_pq_pp=pp_orbitals,
@@ -744,6 +805,9 @@ def run(
                 energy_ewald=energy_ewald,
                 energy_e_self=energy_e_self,
                 transform_matrix=None if not config.wannier_transform else transform_matrix,
+                d_h_pq_pp=d_h_pq_pp,
+                d_energy_ewald_atom=d_energy_ewald_atom,
+                d_energy_frozen_core_atom=d_energy_frozen_core_atom,
             ),
         )
 
@@ -972,6 +1036,9 @@ def run(
                     energy_ewald=energy_ewald,
                     energy_e_self=energy_e_self,
                     transform_matrix=None if not config.wannier_transform else transform_matrix,
+                    d_h_pq_pp=d_h_pq_pp,
+                    d_energy_ewald_atom=d_energy_ewald_atom,
+                    d_energy_frozen_core_atom=d_energy_frozen_core_atom,
                 )
             )
 
@@ -1033,7 +1100,7 @@ def run(
                 energy_dict["vqe_result"] = vqe_result_lst[0]
         if verbosity >= verbosity_summary:
             if config.run_fci:
-                print(f"VQE energy: {vqe_energy} | Diff. to FCI: {np.abs(vqe_energy-fci_energy)}")
+                print(f"VQE energy: {vqe_energy} | Diff. to FCI: {np.abs(vqe_energy - fci_energy)}")
             else:
                 print(f"VQE energy: {vqe_energy}")
             print(f"\tTook {time_vqe:.2f}s")
@@ -1114,7 +1181,7 @@ def main():
         if n_given_args != 1:
             argument_s_str = "arguments were" if n_given_args - 1 > 1 else "argument was"
             print(
-                f"{RED}Error in arguments: If input file is given no other arguments are allowed but {n_given_args-1} other {argument_s_str} given!{RESET_COLOR}",
+                f"{RED}Error in arguments: If input file is given no other arguments are allowed but {n_given_args - 1} other {argument_s_str} given!{RESET_COLOR}",
                 file=sys.stderr,
             )
             sys.exit(1)

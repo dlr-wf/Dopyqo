@@ -1,11 +1,13 @@
 import os
 import sys
 from dataclasses import dataclass
-import xmltodict
-import tomllib
+
 import numpy as np
-from dopyqo.colors import *
+import tomllib
+import xmltodict
+
 from dopyqo import units
+from dopyqo.colors import *
 from dopyqo.helpers.vqe_helpers import ExcitationPools, VQEOptimizers
 
 
@@ -80,6 +82,9 @@ class DopyqoConfig:
                                 Set to False if None. Defaults to None.
         run_hf (bool | None): If True, a Hartree-Fock (HF) calculation is performed with PySCF and the Hamiltonian is transformed into the HF basis for the VQE/FCI.
                               Set to False if None. Defaults to None.
+        calculate_atom_gradient (bool): If True, derivatives of the one-body matrix elements and the Ewald energy with respect to the
+                                        Cartesian atom positions are computed and stored in the returned MatrixElements
+                                        object (fields d_h_pq_pp and d_energy_ewald_atom). Defaults to False.
     """
 
     base_folder: str
@@ -112,6 +117,7 @@ class DopyqoConfig:
     uccsd_reps: int | None = None
     qe_ewald: bool | None = None
     run_hf: bool | None = None  # TODO: Add this to toml-input-file
+    calculate_atom_gradient: bool = False
 
     def __post_init__(self):
         if len(self.base_folder) > 0 and not os.path.isdir(self.base_folder):
@@ -213,6 +219,22 @@ class DopyqoConfig:
         if self.wannier_input_file is not None and not os.path.isfile(self.wannier_input_file):
             print(
                 f"{RED}Config error: Wannier input file ({self.wannier_input_file}) does not exist!{RESET_COLOR}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if self.calculate_atom_gradient and self.wannier_transform:
+            print(
+                f"{RED}Config error: calculate_atom_gradient cannot be combined with wannier_transform: the atom-position "
+                f"derivative matrix elements (d_h_pq_pp) are computed in the raw Kohn-Sham active-orbital basis and are not "
+                f"transformed into the Wannier basis, so they would be inconsistent with the Wannier-transformed h_pq/h_pqrs!{RESET_COLOR}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if self.calculate_atom_gradient and self.run_hf:
+            print(
+                f"{RED}Config error: calculate_atom_gradient cannot be combined with run_hf: the atom-position derivative "
+                f"matrix elements (d_h_pq_pp) are computed in the raw Kohn-Sham active-orbital basis and are not transformed "
+                f"into the Hartree-Fock MO basis, so they would be inconsistent with the HF-transformed h_pq/h_pqrs!{RESET_COLOR}",
                 file=sys.stderr,
             )
             sys.exit(1)
